@@ -1,0 +1,51 @@
+{
+  "name": "base91-jdp",
+  "version": "0.1.0",
+  "description": "basE91 on a JSON-safe alphabet, with a dynamic passthrough mode that carries text at one character per byte",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./codec": "./src/codec.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "base91jdp": "./bin/base91jdp.js"
+  },
+  "files": [
+    "src",
+    "bin",
+    "spec",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "bench": "node bench/bench.js",
+    "bench:sweep": "node bench/sweep.js",
+    "bench:signal": "node bench/signalchar.js",
+    "corpus": "python3 bench/corpus.py"
+  },
+  "keywords": [
+    "base91",
+    "base64",
+    "base85",
+    "encoding",
+    "binary-to-text",
+    "json",
+    "codec"
+  ],
+  "author": "Keywan Ghadami",
+  "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keywan-ghadami/base91-jdp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/keywan-ghadami/base91-jdp/issues"
+  },
+  "homepage": "https://github.com/keywan-ghadami/base91-jdp#readme",
+  "engines": {
+    "node": ">=18.11"
+  }
+}
