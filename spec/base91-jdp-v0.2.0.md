@@ -2,14 +2,23 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.1.0 |
+| Version | 0.2.0 |
 | Status | Draft |
 | Date | 2026-08-22 |
 | License | MPL-2.0 |
 
 > **Draft.** The wire format described here is complete and implemented, but it
-> has not been in the field. Section 9 keeps 7 257 of the 8 281 signal values
+> has not been in the field. Section 9 keeps 6 233 of the 8 281 header values
 > free, and a future version is expected to spend some of them (Section 15).
+>
+> **Changed in 0.2.0.** `-` joined the R-Set (Section 4.2). It is the one R-Set
+> member that *is* in the alphabet: it is substituted not because it cannot be
+> written but because two of them in a row would end the segment. A payload
+> therefore never contains `-` at all, which retires two special cases from the
+> prefix scan and takes text full of `--` — CSS custom properties, Markdown
+> rules, command lines — from a mode switch per occurrence to one donor per
+> segment. Worth 0.29 % over the benchmark corpus and 5.6 % on `bootstrap.css`
+> (Section 14.5).
 
 ---
 
@@ -34,8 +43,9 @@ and `--` switches it off again. In passthrough, text-like input is written one
 output character per input byte instead of being expanded 1.25×, with the seven
 byte values that real text contains and the alphabet does not — space, `"`,
 newline, `\`, carriage return, `'`, tab — carried as stand-ins borrowed from the
-alphabet's rarest characters. Anything passthrough cannot carry, `--` in the
-input included, falls back to the block coder.
+alphabet's rarest characters. `-` is carried the same way, so that the signal
+can never occur inside a segment. Anything passthrough cannot carry falls back
+to the block coder.
 
 ---
 
@@ -54,6 +64,9 @@ input included, falls back to the block coder.
   hand; it is ended by `--`, or by the end of the input.
 * **Binary fallback.** A byte the segment cannot carry ends it. The bytes go
   through the block coder until passthrough is worth resuming.
+* **The signal cannot collide with the payload.** `-` is an R-Set member, so a
+  segment that contains one substitutes it; a payload therefore contains no `-`
+  at all and the exit signal needs no escape rule.
 
 ### 2.2 Key properties
 
@@ -91,9 +104,9 @@ all capitals.
 
 | Symbol | Meaning |
 |---|---|
-| `mask` | 7-bit field; bit *j* set ⟺ R-Set character *j* occurs in the segment |
+| `mask` | 8-bit field; bit *j* set ⟺ R-Set character *j* occurs in the segment |
 | `profile` | donor profile identifier, 0–3 |
-| `k` | `popcount(mask)`, the number of active substitutions, 0 ≤ k ≤ 7 |
+| `k` | `popcount(mask)`, the number of active substitutions, 0 ≤ k ≤ 8 |
 | `rank(j)` | `popcount(mask & ((1 << j) - 1))`, the position of bit *j* among the set bits |
 | `L` | length of a passthrough segment, in bytes |
 | `n` | the encoder's pending bit count; `n_enc` where it needs distinguishing |
@@ -130,8 +143,8 @@ The four printable ASCII characters it does not contain are space, `"`, `'` and
 
 ### 4.2 The R-Set
 
-Seven byte values that real text is full of and the alphabet does not contain.
-The index *j* is normative — it fixes the bit positions in `mask`. The order is
+Eight byte values a passthrough segment carries by substitution. The index *j*
+is normative — it fixes the bit positions in `mask`. The first seven are ordered
 by frequency in the corpus of Section 14.
 
 | j | Character | Byte | | j | Character | Byte |
@@ -139,25 +152,38 @@ by frequency in the corpus of Section 14.
 | 0 | space | `0x20` | | 4 | CR | `0x0D` |
 | 1 | `"` | `0x22` | | 5 | `'` | `0x27` |
 | 2 | LF | `0x0A` | | 6 | TAB | `0x09` |
-| 3 | `\` | `0x5C` | | | | |
+| 3 | `\` | `0x5C` | | 7 | `-` | `0x2D` |
 
-The R-Set and the alphabet are disjoint. Together they cover 98 of the 256 byte
-values; the other 158 are not representable in passthrough.
+Members 0 to 6 are the printable and whitespace characters real text is full of
+and the alphabet does not contain. Member 7, `-`, is different in kind: it *is*
+in the alphabet, and it is substituted not because it cannot be written but
+because two of them in a row are the mode signal. Carrying it as a substitution
+costs one donor in the segments that contain it, and buys three things:
+
+* a payload never contains `-`, so the exit signal is unambiguous with no
+  escape mechanism and no rule about what a segment may end on;
+* text dense in `--` — CSS custom properties, Markdown rules, command lines —
+  costs one donor per segment instead of a mode switch per occurrence;
+* which character sits on value 90 stops being a size decision (Section 14.6).
+
+Members 0 to 6 and the alphabet are disjoint. Together the alphabet and the
+R-Set cover 98 of the 256 byte values; the other 158 are not representable in
+passthrough.
 
 ### 4.3 Donor profiles
 
-A **donor profile** is an ordered sequence of exactly seven distinct alphabet
+A **donor profile** is an ordered sequence of exactly eight distinct alphabet
 characters, none of them `-`.
 
 > A profile is not an alphabet. It is a ranking. Only its first `k` entries have
 > any effect on a segment with `k` active substitutions.
 
-| ID | Rank → 0 1 2 3 4 5 6 |
+| ID | Rank → 0 1 2 3 4 5 6 7 |
 |---|---|
-| 0 | `^` `~` `$` `%` `@` `#` `<` |
-| 1 | `@` `#` `&` `~` `%` `$` `^` |
-| 2 | `%` `#` `~` `@` `^` `<` `$` |
-| 3 | `@` `&` `?` `$` `^` `~` `%` |
+| 0 | `$` `~` `^` `%` `#` `@` `>` `<` |
+| 1 | `@` `&` `!` `~` `%` `<` `$` `^` |
+| 2 | `%` `@` `#` `<` `~` `>` `$` `^` |
+| 3 | `*` `$` `?` `&` `^` `\|` `~` `%` |
 
 Derivation and the reason there are four of them are in Section 14.4.
 
@@ -167,7 +193,7 @@ Given `profile` and `mask`:
 
 ```
 rank = 0
-for j in 0..6:
+for j in 0..7:
     if mask & (1 << j):
         donor(j) = PROFILE[profile][rank]
         rank += 1
@@ -265,7 +291,7 @@ Emit, in this order:
 2. the **header**, two characters, value
 
    ```
-   h = hi + 2 × (mask + 128 × profile)
+   h = hi + 2 × (mask + 256 × profile)
    ```
 
    where `hi = 1` if `n >= 8` and 0 otherwise (Section 6.5);
@@ -307,10 +333,7 @@ For each byte `c`, compute the state including `c` would produce, test it, and
 commit only on success:
 
 ```
-if c is '-' and the previous accepted byte was '-':
-    STOP                                  # the segment would contain the signal
-
-if c is R_CHARS[j] for some j:
+if c is R_CHARS[j] for some j:            # '-' is R_CHARS[7]
     if mask already has bit j:  accept, nothing changes
     new_mask = mask | (1 << j)
     new_k    = k + 1
@@ -333,11 +356,12 @@ commit:  mask, k, min_donor, profile  ←  the tentative values
 `min_donor[p]` is the lowest rank any literal in the segment holds in profile
 `p`, and a profile is viable exactly while that is at least `k`.
 
-**Trailing `-`.** If the accepted prefix ends with `-` and the segment will be
-followed by an exit signal — that is, if it does not run to the end of the input
-— the last byte SHALL be dropped. Otherwise the exit signal would glue onto it
-and a decoder would cut the segment one character early. `-` is in no profile,
-so dropping it changes neither `mask` nor `profile`.
+**The signal cannot occur in a payload.** `-` is `R_CHARS[7]`, so a segment
+containing one sets bit 7 and writes a donor in its place; a segment that cannot
+set bit 7 — because no profile could lend that many donors — stops at the `-`
+instead. Either way no `-` reaches the payload, so no rule about doubled
+hyphens or about what a segment may end on is needed. No donor may be `-`
+(Section 4.3), which is what closes the argument.
 
 > **Normative.** On STOP, the values that describe the emitted segment are those
 > in effect **before** the byte that ended the scan was examined.
@@ -362,20 +386,20 @@ When the input ends in block mode with `n > 0`, emit basE91's trailing group:
 | `MAX_DP_BYTES` | 65 536 | Encoder lookahead bound; makes the output canonical and the encoder's memory finite |
 | `HEADER_CHARS` | 2 | Header width |
 | `NUM_PROFILES` | 4 | Donor profiles (Section 14.4) |
-| `R_LEN` | 7 | R-Set size, and the width of `mask` |
+| `R_LEN` | 8 | R-Set size, and the width of `mask` |
 
 `MIN_DP_BYTES` is derived rather than fitted. A segment of `L` bytes costs
 `L + 6` characters — two for the entry signal, two for the header, two for the
 exit — while block mode charges at most `16/13` characters per byte. `L + 6 ≤
-16L/13` gives `L ≥ 26`. The measured optimum on the corpus of Section 14 is 30,
-better by 0.001 %; the plateau runs from 26 to 32.
+16L/13` gives `L ≥ 26`. The measured optimum on the corpus of Section 14 is 28,
+better by 0.0006 %; the plateau runs from 26 to 32.
 
 ### 6.10 Canonicity
 
 Encoder output is deterministic:
 
 1. **Maximal prefix.** The scan of Section 6.6 takes the longest prefix it
-   accepts, subject to `MAX_DP_BYTES` and the trailing-`-` rule.
+   accepts, subject to `MAX_DP_BYTES`.
 2. **Smallest viable profile.** The numerically smallest identifier that is
    viable for that prefix.
 3. **Exact mask.** `mask` has a set bit for every R-Set character occurring in
@@ -435,12 +459,12 @@ The end of the input ends the segment.
 Read the two header characters as `h = d0 + d1 × 91`.
 
 ```
-if h >= 2 × 128 × NUM_PROFILES:  error UNDEFINED_SIGNAL
+if h >= 2 × 256 × NUM_PROFILES:  error UNDEFINED_SIGNAL
 
 hi      =  h & 1
 rest    = (h - hi) / 2
-mask    =  rest % 128
-profile = (rest - mask) / 128
+mask    =  rest % 256
+profile = (rest - mask) / 256
 
 n_enc = ((8 - n) % 8) + 8 * hi
 if n_enc > 13:  error INVALID_FLUSH
@@ -483,10 +507,10 @@ The header that follows an entering signal has its own 8 281 values:
 
 | Range of h | Interpretation |
 |---|---|
-| 0 … 1 023 | Passthrough segment: `hi`, 7-bit `mask`, `profile` 0–3 |
-| 1 024 … 8 280 | `FUTURE_SIGNAL_SPACE`. MUST be rejected. |
+| 0 … 2 047 | Passthrough segment: `hi`, 8-bit `mask`, `profile` 0–3 |
+| 2 048 … 8 280 | `FUTURE_SIGNAL_SPACE`. MUST be rejected. |
 
-**7 257 values are unassigned.** They are where a run-length construct would go
+**6 233 values are unassigned.** They are where a run-length construct would go
 (Section 15).
 
 ---
@@ -525,7 +549,7 @@ decision point. Cheapening the test is the whole optimisation.
 
 The scan keeps, per profile, the lowest rank any literal has held in it. Four
 such numbers fit in one 32-bit word, one per byte lane, and both operations the
-scan needs are then branch-free — see base85n's specification, section 11.2,
+scan needs are then branch-free — see Base85N's specification, section 11.2,
 for the lane arithmetic; it applies here unchanged with four lanes instead of
 eight.
 
@@ -544,17 +568,20 @@ the block accumulator, which Section 6.4 flushes explicitly.
 
 * The alphabet has 91 distinct characters, none of them `"`, `\`, `'` or below
   `0x20`, and `-` is at value 90.
-* `R_CHARS` has seven distinct entries, none in the alphabet.
-* Each profile has seven distinct alphabet characters and does not contain `-`.
+* `R_CHARS` has eight distinct entries; the first seven are not in the
+  alphabet, and the eighth is `-`.
+* Each profile has eight distinct alphabet characters and does not contain `-`.
 * `8280` is not in the range of the block coder, for any input.
 
 ### 12.2 Round trip
 
 * Random binary at every length 0–300, plus 1 023, 1 024, 1 025, 65 535,
   65 536, 65 537.
-* Text with every R-Set character, in every combination that fits a segment.
+* Text with every one of the 256 masks over the R-Set.
 * `-`, `--`, `---` and longer runs, at the start, in the middle and at the end
-  of the input, and immediately before and after a segment boundary.
+  of the input, and immediately before and after a segment boundary; and a
+  segment in which no profile can lend a donor for `-`, so that the scan has to
+  stop at one.
 * Mixed text and binary, exercising every block↔passthrough transition, with
   the pending bit count `n` taking each of its 14 values at a transition.
 
@@ -564,8 +591,7 @@ the block accumulator, which Section 6.4 flushes explicitly.
 * The emitted `profile` is the smallest viable one for the accepted prefix.
 * `mask = 0` is emitted only with `profile = 0`.
 * `mask` has a set bit for exactly the R-Set characters in the segment.
-* No emitted segment contains `--`, and none ends with `-` unless it ends the
-  stream.
+* No emitted segment contains `-` at all.
 * The pending bits take 0, 1 or 2 characters exactly as Section 6.5 requires.
 
 ### 12.4 Adversarial decode
@@ -626,9 +652,9 @@ over the whole corpus:
 
 | `MIN_BINARY_RUN` | 1 | 2 | 3 | **4** | 5 | 8 | 16 | 32 |
 |---|---|---|---|---|---|---|---|---|
-| ratio | 1.08762 | 1.08761 | 1.08760 | **1.08759** | 1.08791 | 1.08789 | 1.08832 | 1.08907 |
+| ratio | 1.08443 | 1.08442 | 1.08442 | **1.08442** | 1.08450 | 1.08452 | 1.08472 | 1.08503 |
 
-Four is the optimum, and the margin over 1 is 0.003 % — the interesting feature
+Four is the optimum, and the margin over 1 is 0.001 % — the interesting feature
 of the table is not the minimum but the step between 4 and 5. Below it the
 parameter is doing nothing that `MIN_DP_BYTES` was not already doing: a
 passthrough segment has to be worth its own signal regardless, so re-entering
@@ -643,14 +669,15 @@ string, where `"` and `\` have to be escaped:
 
 | | Base64 | Ascii85 | basE91 | Base85N | base91-jdp |
 |---|---|---|---|---|---|
-| text, raw | 1.33333 | 1.25000 | 1.22461 | **0.96474** | 1.00655 |
-| binary, raw | 1.33334 | 1.12450 | 1.20546 | **1.05041** | 1.17091 |
-| whole corpus, raw | 1.33333 | 1.18812 | 1.21517 | **1.00698** | 1.08759 |
-| whole corpus, in JSON | 1.33333 | 1.21326 | 1.23996 | **1.00698** | 1.08759 |
+| text, raw | 1.33333 | 1.25000 | 1.22461 | **0.96474** | 1.00081 |
+| binary, raw | 1.33334 | 1.12450 | 1.20546 | **1.05041** | 1.17037 |
+| whole corpus, raw | 1.33333 | 1.18812 | 1.21517 | **1.00698** | 1.08442 |
+| whole corpus, in JSON | 1.33333 | 1.21326 | 1.23996 | **1.00698** | 1.08442 |
 
 Against basE91, the format it is a variant of, the swap costs nothing and the
-container saves 4.2 %: 1.23996 against 1.08759 inside a JSON string. Against
-Base64 it saves 18.4 %.
+container saves 12.5 %: 1.23996 against 1.08442 inside a JSON string. Against
+Base64 it saves 18.7 %. Text lands at 1.00081 — passthrough carries the text
+corpus at essentially one character per byte.
 
 Against Base85N it wins where neither codec's compressing mode can do anything
 and the alphabet is all that is left — every incompressible binary in the
@@ -662,10 +689,11 @@ corpus — and loses everywhere Base85N's Fill mode has runs to work with:
 | `DejaVuSans.ttf` | 1.232 | **1.217** |
 | `grace_hopper.jpg` | 1.249 | **1.229** |
 | `minduka_present.png` | 1.250 | **1.229** |
-| `lodash.js` | 1.004 | **1.002** |
+| `bootstrap.css` | 1.003 | **1.001** |
+| `lodash.js` | 1.004 | **1.001** |
 | `countries.min.json` | 1.003 | **1.000** |
-| `requests-2.32.3.tar` | **0.767** | 1.046 |
-| `commonmark-spec.txt` | **0.859** | 1.007 |
+| `requests-2.32.3.tar` | **0.767** | 1.044 |
+| `commonmark-spec.txt` | **0.859** | 1.005 |
 | `countries.json` | **0.935** | 1.000 |
 
 ### 14.4 The donor profiles
@@ -677,7 +705,7 @@ to right. Gains on the training corpus:
 
 | profiles | 1 | 2 | 3 | **4** | 5 | 6 |
 |---|---|---|---|---|---|---|
-| gain | — | 0.224 % | 0.042 % | **0.024 %** | 0.011 % | 0.007 % |
+| gain | — | 0.245 % | 0.067 % | **0.050 %** | 0.013 % | 0.019 % |
 
 Four is where the curve flattens. Letters and digits are kept out of the
 candidate pool on principle: a rare capital is rare across all text and common
@@ -685,36 +713,62 @@ in the one file that uses it, so it breaks segments in bursts. Allowing them
 into the pool wins 0.1 % on the corpus it is derived from and loses 0.1 % on the
 one it is measured on, which is what overfitting looks like.
 
-### 14.5 The signal character
+### 14.5 `-` in the R-Set
+
+Version 0.1.0 kept `-` out of the R-Set and handled the collision structurally:
+a doubled hyphen in the input ended the segment, and a segment was forbidden to
+end on a single one. Moving it in was worth:
+
+| | 0.1.0, `-` a literal | 0.2.0, `-` substituted |
+|---|---|---|
+| `bootstrap.css` | 1.060 | **1.001** |
+| `requests-history.md` | 1.028 | **1.002** |
+| text corpus | 1.00654 | **1.00081** |
+| whole corpus | 1.08758 | **1.08442** |
+
+`bootstrap.css` is the case: 281 kB of CSS custom properties, every one of them
+beginning `--`, which broke 2 046 passthrough segments. It now breaks none, and
+the whole corpus went from 4 867 segments to 1 461. The cost is one donor
+character in every segment that contains a hyphen, which is most of them — and
+that cost is what the 0.29 % is net of.
+
+### 14.6 The signal character
 
 Which character sits on value 90 is a free choice once `"` is out of the
 alphabet. `--` costs what its occurrences in text cost:
 
+Which character sits on value 90 is a free choice once `"` is out of the
+alphabet. Measured with R-Set membership moving with the candidate, as
+Section 4.2 requires:
+
 | signal | occurrences of the pair in the corpus | whole-corpus ratio |
 |---|---|---|
-| `--` | 10 553 | 1.08759 |
-| `` `` `` | 41 002 | 1.08825 |
-| `\|\|` | 303 | 1.08560 |
-| `##` | 203 | 1.08551 |
-| `QQ` | 139 | **1.08544** |
+| `--` | 10 553 | 1.08442 |
+| `` `` `` | 41 002 | 1.08433 |
+| `~~` | 328 | 1.08508 |
+| `^^` | 38 | 1.08464 |
+| `\|\|` | 303 | **1.08426** |
+| `QQ` | 139 | 1.08427 |
 
-`--` is the worst of the plausible choices by 0.2 %, and nearly all of that is
-one file: `bootstrap.css` is 281 kB of CSS custom properties, every one of them
-beginning `--`, and it breaks 2 046 segments there against 504 in the whole rest
-of the corpus. The format keeps `--` anyway. It is the character the alphabet
-swap put on value 90 in the first place, it is the one signal that reads as a
-separator rather than as data, and a codec whose mode marker is `QQ` is a codec
-nobody can debug by looking at it. The 0.2 % is the price of that, it is
-measured, and Section 15 does not propose to change it.
+The spread is 0.08 % and `--` sits 0.015 % off the best — which is the point of
+the table rather than an aside. In version 0.1.0 the same measurement put `--`
+0.3 % behind, and that was the strongest argument for choosing a different
+character. Substituting `-` closed the gap, so the choice is now settled on the
+grounds it should have been settled on all along: `-` is what the JSON-safety
+swap put on value 90, and a doubled hyphen reads as a separator where `QQ`
+reads as data.
 
-### 14.6 What is not measured, and what is left on the table
+### 14.7 What is not measured, and what is left on the table
 
 * **The corpus is 13 files.** Every constant in Section 6.9 sits on a plateau
   rather than at a fitted optimum, for that reason.
 * **There is no run-length construct.** A zero-padded ELF, a block-padded tar
   and pretty-printed JSON indentation are all carried at 1.0 or 1.2308 where a
   Fill mode would carry them at almost nothing. That is the whole of the gap to
-  Base85N on this corpus, and Section 9 leaves the space to close it.
+  Base85N on this corpus, and Section 9 leaves the space to close it. Bounding
+  the gain by assuming every run of five or more identical bytes cost five
+  characters puts the whole corpus at 0.965 — below Base85N's 1.007 — with 36 %
+  of `countries.json` and 34 % of the tar and the ELF sitting in such runs.
 * **UTF-8 above U+007F breaks passthrough.** A multi-byte character is not
   representable, so prose in a language that uses accents runs through block
   mode. `commonmark-spec.txt` and `requests-history.md` both pay for this.
@@ -723,15 +777,20 @@ measured, and Section 15 does not propose to change it.
 
 ## 15. Future signal space (informative)
 
-7 257 of the header's 8 281 values are unassigned, and one obvious construct
+6 233 of the header's 8 281 values are unassigned, and one obvious construct
 would fit in them: a run-length mode along the lines of Base85N's Fill,
-carrying a repeated byte and a length in the header's own characters and no
-payload at all. At four characters plus the pending bits it would be a
-character cheaper than Base85N's five, and Section 14.6 says where it would pay.
+carrying a repeated byte and a length instead of a payload. A header value of
+2 048 or more could mean "a fill, and one further header character follows",
+which gives `6233 × 91 = 567 203` states — enough for any byte value and a
+length to 2 048 — at five characters plus the pending bits. Section 14.7 bounds
+what it would be worth on this corpus at 0.965 characters per byte, against
+1.084 today and Base85N's 1.007.
 
-It is deliberately not in version 0.1.0. Adding it changes the security
+It is deliberately not in version 0.2.0. Adding it changes the security
 argument of Section 13 — a decoder that can be made to write more than it reads
-needs an expansion bound, and this one currently does not need one at all.
+needs an expansion bound, and this one currently does not need one at all — and
+it needs the run-break rule inside a passthrough segment that Base85N spends
+its section 6.2 on, with a threshold of its own to measure.
 
 ---
 

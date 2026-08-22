@@ -37,10 +37,10 @@ test('lengths around the lookahead bound', () => {
 });
 
 test('every R-Set character, alone and in combination', () => {
-  const R = [' ', '"', '\n', '\\', '\r', "'", '\t'];
-  for (let m = 0; m < 128; m++) {
+  const R = [' ', '"', '\n', '\\', '\r', "'", '\t', '-'];
+  for (let m = 0; m < 256; m++) {
     let s = 'the quick brown fox jumps over the lazy dog and then some more text';
-    for (let j = 0; j < 7; j++) if (m & (1 << j)) s += R[j] + 'padding' + j;
+    for (let j = 0; j < 8; j++) if (m & (1 << j)) s += R[j] + 'padding' + j;
     roundTrip(new TextEncoder().encode(s.repeat(3)));
   }
 });

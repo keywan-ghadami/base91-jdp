@@ -5,7 +5,7 @@
 /**
  * The donor profiles of spec section 4.2.
  *
- * A profile is an ordered ranking of seven alphabet characters, not an
+ * A profile is an ordered ranking of eight alphabet characters, not an
  * alphabet: a segment whose mask has k bits set spends only the first k of
  * them, so only those k stop being usable as literals inside it.
  *
@@ -16,7 +16,7 @@
  * excluded on principle (see the tool for why, and RESULTS.md for what
  * happens when they are not).
  *
- * A fifth profile was worth 0.011 % on the training corpus and nothing
- * measurable on the hold-out; four is where the curve flattens.
+ * A fifth profile was worth 0.013 % on the training corpus and 0.001 % on the
+ * hold-out; four is where the curve flattens.
  */
-export const PROFILES = ['^~$%@#<', '@#&~%$^', '%#~@^<$', '@&?$^~%'];
+export const PROFILES = ['$~^%#@><', '@&!~%<$^', '%@#<~>$^', '*$?&^|~%'];

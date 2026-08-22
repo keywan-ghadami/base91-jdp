@@ -11,7 +11,7 @@
  * `--` becomes the one value the block coder can never emit -- and that is the
  * signal that switches Dynamic Passthrough on and off.
  *
- * See spec/base91-jdp-v0.1.0.md for the format.
+ * See spec/base91-jdp-v0.2.0.md for the format.
  */
 
 import { makeCodec } from './codec.js';
@@ -30,7 +30,7 @@ export {
 export { PROFILES } from './profiles.js';
 export { makeCodec } from './codec.js';
 
-/** The constants of spec section 6.4. */
+/** The constants of spec section 6.9. */
 export const CONSTANTS = Object.freeze({
   MIN_DP_BYTES: 26,
   MIN_BINARY_RUN: 4,

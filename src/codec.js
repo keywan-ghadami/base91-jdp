@@ -46,10 +46,15 @@ export function alphabetWithSignal(ch) {
 // the block coder's range -- 8280, "--" -- and costs one of 8281 states.
 export const BLOCK_THRESHOLD = 87;
 
-// The R-Set: the seven bytes that real text is full of and the alphabet does
-// not contain.  The index j is normative: it fixes the bit positions of mask.
-export const R_CHARS = [0x20, 0x22, 0x0a, 0x5c, 0x0d, 0x27, 0x09];
-export const R_NAMES = ['space', '"', 'LF', '\\', 'CR', "'", 'TAB'];
+// The R-Set: the eight bytes a passthrough segment substitutes.  Seven of them
+// real text is full of and the alphabet does not contain; the eighth is '-'
+// itself, which is in the alphabet but cannot be written literally, since two
+// of them in a row would end the segment.  Substituting it instead means a
+// payload never contains '-' at all, so the exit signal needs no escaping
+// rule and text full of '--' costs one donor rather than a mode switch each
+// time.  The index j is normative: it fixes the bit positions of mask.
+export const R_CHARS = [0x20, 0x22, 0x0a, 0x5c, 0x0d, 0x27, 0x09, 0x2d];
+export const R_NAMES = ['space', '"', 'LF', '\\', 'CR', "'", 'TAB', '-'];
 export const R_LEN = R_CHARS.length;
 
 export const ERR = {
@@ -78,13 +83,14 @@ const fail = (code, msg) => {
 
 // Only a fallback for makeCodec() calls that name no profiles; the shipped
 // codec passes the derived table of src/profiles.js.
-export const DEFAULT_PROFILES = [['^', '~', '$', '%', '@', '#', '<']];
+export const DEFAULT_PROFILES = [['$', '~', '^', '%', '#', '@', '>', '<']];
 
 /**
  * Build a codec from a configuration.
  *
  * @param {object} cfg
- * @param {string[][]} cfg.profiles     donor rankings, R_LEN characters each
+ * @param {string[][]} cfg.profiles     donor rankings, one per R-Set member
+ * @param {number[]}   cfg.rChars       the substituted byte values, in mask-bit order
  * @param {string}     cfg.maskMode     'exact' | 'prefix' | 'none'
  * @param {number}     cfg.headerChars  header width, in characters
  * @param {number}     cfg.minDpBytes   shortest passthrough segment
@@ -93,6 +99,8 @@ export const DEFAULT_PROFILES = [['^', '~', '$', '%', '@', '#', '<']];
  */
 export function makeCodec(cfg = {}) {
   const alphabet = cfg.alphabet ?? ALPHABET;
+  const rChars = cfg.rChars ?? R_CHARS;
+  const rLen = rChars.length;
   if (alphabet.length !== 91 || new Set(alphabet).size !== 91) {
     throw new Error('the alphabet must be 91 distinct characters');
   }
@@ -120,16 +128,16 @@ export function makeCodec(cfg = {}) {
   for (let v = 0; v < alphabet.length; v++) CHR[v] = alphabet.charCodeAt(v);
 
   const RIDX = new Int8Array(256).fill(-1); // byte -> R-Set index
-  R_CHARS.forEach((c, j) => (RIDX[c] = j));
+  rChars.forEach((c, j) => (RIDX[c] = j));
 
   // ranks[c * numProfiles + p] is the position byte c holds in profile p, or
-  // R_LEN when it is absent from that profile.  A profile stays viable while
+  // rLen when it is absent from that profile.  A profile stays viable while
   // no literal it has seen ranks below k, so "absent" and "ranked below no
   // possible k" have to be the same number.
-  const RANK = new Uint8Array(256 * numProfiles).fill(R_LEN);
+  const RANK = new Uint8Array(256 * numProfiles).fill(rLen);
   profiles.forEach((prof, p) => {
-    if (prof.length !== R_LEN) throw new Error('profile must have R_LEN donors');
-    if (new Set(prof).size !== R_LEN) throw new Error('donors must be distinct');
+    if (prof.length !== rLen) throw new Error(`profile must have ${rLen} donors`);
+    if (new Set(prof).size !== rLen) throw new Error('donors must be distinct');
     prof.forEach((ch, r) => {
       const c = ch.charCodeAt(0);
       if (VAL[c] < 0) throw new Error(`donor ${ch} is not in the alphabet`);
@@ -142,9 +150,9 @@ export function makeCodec(cfg = {}) {
   const headerCapacity = 91 ** headerChars;
   // What the header's mask field can say: every subset (exact), how many of
   // the frequency-ordered R-Set characters are covered (prefix), or nothing,
-  // in which case every segment spends all seven donors (none).
+  // in which case every segment spends every donor (none).
   const maxMaskStates =
-    maskMode === 'exact' ? 1 << R_LEN : maskMode === 'prefix' ? R_LEN + 1 : 1;
+    maskMode === 'exact' ? 1 << rLen : maskMode === 'prefix' ? rLen + 1 : 1;
   if (2 * maxMaskStates * numProfiles > headerCapacity) {
     throw new Error(
       `header of ${headerChars} char(s) cannot carry ${numProfiles} profiles` +
@@ -156,7 +164,7 @@ export function makeCodec(cfg = {}) {
   const maskToState = (mask) =>
     maskMode === 'exact' ? mask : maskMode === 'prefix' ? 32 - Math.clz32(mask) : 0;
   const stateToMask = (state) =>
-    maskMode === 'exact' ? state : maskMode === 'prefix' ? (1 << state) - 1 : (1 << R_LEN) - 1;
+    maskMode === 'exact' ? state : maskMode === 'prefix' ? (1 << state) - 1 : (1 << rLen) - 1;
 
   const packHeader = (hi, mask, profile) =>
     hi + 2 * (maskToState(mask) + maxMaskStates * profile);
@@ -170,9 +178,9 @@ export function makeCodec(cfg = {}) {
   // donorTable[j] -> byte, for the active bits of mask (spec section 4.3)
   function donorsFor(mask, profile) {
     const prof = profiles[profile];
-    const out = new Int16Array(R_LEN).fill(-1);
+    const out = new Int16Array(rLen).fill(-1);
     let rank = 0;
-    for (let j = 0; j < R_LEN; j++) {
+    for (let j = 0; j < rLen; j++) {
       if (mask & (1 << j)) out[j] = prof[rank++].charCodeAt(0);
     }
     return out;
@@ -185,9 +193,9 @@ export function makeCodec(cfg = {}) {
   const tentative = new Uint8Array(numProfiles);
 
   function dpScan(input, pos, end) {
-    minDonor.fill(R_LEN);
+    minDonor.fill(rLen);
     let mask = 0;
-    let k = maskMode === 'none' ? R_LEN : 0;
+    let k = maskMode === 'none' ? rLen : 0;
     let profile = 0;
     let i = 0;
     let prev = -1;
@@ -196,8 +204,10 @@ export function makeCodec(cfg = {}) {
 
     while (i < limit) {
       const c = input[pos + i];
-      // "--" is the mode signal; it can never appear inside a segment.
-      if (c === SIG && prev === SIG) {
+      // "--" is the mode signal; it can never appear inside a segment. When
+      // the signal character is itself an R-Set member it is substituted
+      // away instead, and this can never fire.
+      if (c === SIG && prev === SIG && RIDX[c] < 0) {
         stop = 'signal';
         break;
       }
@@ -258,10 +268,10 @@ export function makeCodec(cfg = {}) {
 
     // A segment may not end on '-': the exit signal would glue onto it and
     // the decoder would cut the segment one character early.
-    if (i > 0 && pos + i < end && input[pos + i - 1] === SIG) i--;
+    if (i > 0 && pos + i < end && input[pos + i - 1] === SIG && RIDX[SIG] < 0) i--;
 
     if (i === limit && limit < end - pos) stop = 'cap';
-    if (maskMode === 'none') mask = (1 << R_LEN) - 1;
+    if (maskMode === 'none') mask = (1 << rLen) - 1;
     return { L: i, mask, profile, stop };
   }
 
@@ -424,7 +434,7 @@ export function makeCodec(cfg = {}) {
         }
         const j = fromDonor[c];
         if (j >= 0) {
-          emit(R_CHARS[j]);
+          emit(rChars[j]);
         } else {
           digit(c); // validate: every other character stands for itself
           emit(c);
@@ -492,7 +502,7 @@ export function makeCodec(cfg = {}) {
 
       donor = donorsFor(mask, profile);
       fromDonor = new Int8Array(256).fill(-1);
-      for (let j = 0; j < R_LEN; j++) if (donor[j] >= 0) fromDonor[donor[j]] = j;
+      for (let j = 0; j < rLen; j++) if (donor[j] >= 0) fromDonor[donor[j]] = j;
       inDp = true;
     }
 

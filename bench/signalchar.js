@@ -6,13 +6,17 @@
 //
 // Swapping `"` out of basE91's alphabet for `-` is what makes the output
 // JSON-safe, and that is fixed. Which character then sits on value 90 -- and
-// so which doubled character becomes the mode signal -- is a free choice, and
-// text that contains that character doubled has to fall back to block mode.
-// This measures the alternatives, and counts why passthrough segments end.
+// so which doubled character becomes the mode signal -- is a free choice.
+//
+// Since v0.2.0 the signal character is also an R-Set member, so a segment
+// substitutes it away and its doubled form can never occur in a payload. Each
+// candidate below is measured that way, R-Set membership moving with it, which
+// is what makes the rows comparable. It also makes them nearly equal: the
+// point of the table is that the choice has stopped mattering.
 //
 //   node bench/signalchar.js
 
-import { makeCodec, alphabetWithSignal } from '../src/codec.js';
+import { makeCodec, alphabetWithSignal, R_CHARS } from '../src/codec.js';
 import { PROFILES } from '../src/profiles.js';
 import { CONSTANTS } from '../src/index.js';
 import { loadCorpus, measure } from './lib.js';
@@ -35,11 +39,12 @@ console.log('|---|---|---|---|---|');
 const results = [];
 for (const ch of candidates) {
   const alphabet = alphabetWithSignal(ch);
-  // A donor may not be the signal character; profile 0 has none of the
-  // candidates that are also donors, so only swap when it collides.
-  const profiles = PROFILES.filter((p) => !p.includes(ch));
-  if (!profiles.length) continue;
-  const codec = makeCodec({ ...cfg, alphabet, profiles });
+  // The signal character is an R-Set member, and a donor may not be the signal
+  // character, so both move with the candidate.
+  const rChars = R_CHARS.map((c) => (c === 0x2d ? ch.charCodeAt(0) : c));
+  const profiles = PROFILES.map((p) => p.replace(ch, '-')).filter((p) => !p.includes(ch));
+  if (profiles.length !== PROFILES.length) continue;
+  const codec = makeCodec({ ...cfg, alphabet, rChars, profiles });
   const m = measure((b) => codec.encode(b), corpus);
   let pairs = 0;
   const code = ch.charCodeAt(0);
@@ -59,8 +64,8 @@ for (const r of results) {
   );
 }
 console.log(
-  '\nCandidates that appear in a donor profile are measured with the profiles' +
-    ' that do not use them, so the rows are not perfectly like for like.',
+  '\nA candidate that appears in a donor profile takes the place of `-` there,' +
+    ' since `-` is an ordinary alphabet character once it is not the signal.',
 );
 
 // --- why segments end ------------------------------------------------

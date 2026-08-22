@@ -1,6 +1,6 @@
 {
   "name": "base91-jdp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "basE91 on a JSON-safe alphabet, with a dynamic passthrough mode that carries text at one character per byte",
   "type": "module",
   "main": "./src/index.js",
@@ -24,6 +24,7 @@
     "bench": "node bench/bench.js",
     "bench:sweep": "node bench/sweep.js",
     "bench:signal": "node bench/signalchar.js",
+    "bench:fill": "node bench/fillbound.js",
     "corpus": "python3 bench/corpus.py"
   },
   "keywords": [

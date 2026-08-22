@@ -3,19 +3,20 @@
 **basE91 with a JSON-safe alphabet, and a passthrough mode that carries text at
 one character per byte.**
 
-[![Spec](https://img.shields.io/badge/spec-v0.1.0%20draft-yellow)](spec/base91-jdp-v0.1.0.md)
+[![Spec](https://img.shields.io/badge/spec-v0.2.0%20draft-yellow)](spec/base91-jdp-v0.2.0.md)
 [![License](https://img.shields.io/badge/license-MPL--2.0-green)](LICENSE)
 
 ```js
 import { encode, decode } from 'base91-jdp';
 
 encode(new TextEncoder().encode('{"user":"ada","id":42,"role":"admin"}'));
-// --EA{^user^:^ada^,^id^:42,^role^:^admin^}      41 characters for 37 bytes
+// --EA{$user$:$ada$,$id$:42,$role$:$admin$}      41 characters for 37 bytes
 ```
 
 That output goes into a JSON string verbatim. No escaping, no `\"`, no `\\`,
 nothing that can break the document it sits in — and the payload is still
-legible, because `^` is standing in for the space and everything else is itself.
+legible, because `$` is standing in for the quotation mark and everything else
+is itself.
 
 ---
 
@@ -49,10 +50,22 @@ are written as stand-ins borrowed from the alphabet's rarest characters, named
 per segment by a two-character header. There is no escape mechanism and no
 escape character; a segment either carries a byte or it does not.
 
-When it does not — a UTF-8 continuation byte, a byte of a JPEG, or `--` itself
-appearing in the input — the segment ends and the bytes go through the block
-coder until passthrough is worth resuming. That is the **binary fallback**, and
-it is why the format handles mixed content without being told which is which.
+`-` is carried the same way, and that is worth its own sentence: it is the one
+stand-in that is *in* the alphabet, substituted not because it cannot be written
+but because two in a row would end the segment. So a payload never contains `-`
+at all, the exit signal cannot collide with anything, and text dense in `--`
+costs one stand-in per segment rather than a mode switch per occurrence:
+
+```js
+encodeText('--bs-blue: #0d6efd; --bs-indigo: #6610f2; --bs-purple: #6f42c1;');
+// --<C~~bs~blue:$#0d6efd;$~~bs~indigo:$#6610f2;$~~bs~purple:$#6f42c1;
+//        67 characters for 63 bytes -- `~` stands in for `-`, `$` for the space
+```
+
+When a byte cannot be carried — a UTF-8 continuation byte, a byte of a JPEG —
+the segment ends and the bytes go through the block coder until passthrough is
+worth resuming. That is the **binary fallback**, and it is why the format
+handles mixed content without being told which is which.
 
 ## Where it wins, and where it does not
 
@@ -62,15 +75,18 @@ method and every sweep: [`bench/results/RESULTS.md`](bench/results/RESULTS.md).
 
 | | Base64 | Ascii85 | basE91 | [Base85N](https://base85n.ghadami.de/) | base91-jdp |
 |---|---|---|---|---|---|
-| text files | 1.333 | 1.262 | 1.252 | **0.965** | 1.007 |
-| binary files | 1.333 | 1.163 | 1.228 | **1.050** | 1.171 |
-| whole corpus | 1.333 | 1.213 | 1.240 | **1.007** | 1.088 |
+| text files | 1.333 | 1.262 | 1.252 | **0.965** | 1.001 |
+| binary files | 1.333 | 1.163 | 1.228 | **1.050** | 1.170 |
+| whole corpus | 1.333 | 1.213 | 1.240 | **1.007** | 1.084 |
 
 **Against basE91** — the format it is a variant of — the swap costs nothing and
-the container saves **12.3 %**. Same algorithm, same density, one character
+the container saves **12.5 %**. Same algorithm, same density, one character
 different, and no escaping.
 
-**Against Base64**: 18.4 % smaller over the corpus, 24.5 % on text.
+**Against Base64**: 18.7 % smaller over the corpus, 25.0 % on text.
+
+On the text corpus it lands at **1.00081** — passthrough carries real source,
+JSON and prose at essentially one character per byte.
 
 **Against Base85N** it splits, and the split is the honest summary of what this
 format is for:
@@ -81,12 +97,13 @@ format is for:
 | `DejaVuSans.ttf` | 1.232 | **1.217** |
 | `grace_hopper.jpg` | 1.249 | **1.229** |
 | `minduka_present.png` | 1.250 | **1.229** |
+| `bootstrap.css` | 1.003 | **1.001** |
 | `countries.min.json` | 1.003 | **1.000** |
-| `lodash.js` | 1.004 | **1.002** |
+| `lodash.js` | 1.004 | **1.001** |
 | `countries.json` | **0.935** | 1.000 |
-| `commonmark-spec.txt` | **0.859** | 1.007 |
-| `requests-2.32.3.tar` | **0.767** | 1.046 |
-| whole corpus | **1.007** | 1.088 |
+| `commonmark-spec.txt` | **0.859** | 1.005 |
+| `requests-2.32.3.tar` | **0.767** | 1.044 |
+| whole corpus | **1.007** | 1.084 |
 
 base91-jdp wins **every file neither codec can compress** — the WebAssembly
 module, the font, the JPEG, the PNG — by 1.2 % to 2.5 %. Where both formats have
@@ -100,23 +117,27 @@ the input needs no closing signal:
 input     {"user":"ada","id":42,"role":"admin"}          37 bytes
 Base64    eyJ1c2VyIjoiYWRhIiwiaWQiOjQyLCJyb2xlIjoiYWRtaW4ifQ==    52
 Base85N   %nU$w{~user~:~ada~^~id~:42^~role~:~admin~}              42
-base91-jdp  --EA{^user^:^ada^,^id^:42,^role^:^admin^}             41
+base91-jdp  --EA{$user$:$ada$,$id$:42,$role$:$admin$}             41
 ```
 
 It loses everywhere Base85N's **Fill** mode has runs to work with: the zero
 padding in a block-aligned tar, the indentation in pretty-printed JSON, the long
 space runs in a specification document. base91-jdp has no run-length construct
-at all. That is the whole of the 8 % gap over the corpus, it is a known gap
-rather than a surprise, and §15 of the specification reserves 7 257 of the
-header's 8 281 values for closing it.
+at all. That is the whole of the 7.7 % gap over the corpus, it is a known gap
+rather than a surprise, and §15 of the specification reserves 6 233 of the
+header's 8 281 values for closing it. Bounding what such a mode would be worth
+— `npm run bench:fill` — puts the corpus at 0.965, below Base85N; the bound is
+optimistic, but it shows the gap is one construct wide.
 
 ### So which should you use?
 
 * Output goes into **XML, HTML or an SVG attribute** → not this. `<`, `>` and
   `&` are all in this alphabet. Use [Base85N](https://base85n.ghadami.de/),
   whose alphabet contains none of them.
-* Payload is **mostly text**, or has long runs of one byte → Base85N. Its Fill
-  mode wins by more than the alphabet loses.
+* Payload has **long runs of one byte** — zero padding, deep indentation →
+  Base85N. Its Fill mode wins by more than the alphabet loses.
+* Payload is **ordinary text with no long runs** — minified JSON, CSS, a log
+  line, source without deep indentation → base91-jdp, narrowly.
 * Payload is **incompressible binary in JSON** — a key, a hash, a thumbnail, a
   compressed blob, a media file → base91-jdp, by 1.2 % to 2.5 %.
 * Payload is a **short JSON or text field in a JSON document** → base91-jdp, by
@@ -143,6 +164,7 @@ browsers, Deno and Bun.
 | `encodeText(text: string): string` | Encode a string as UTF-8. |
 | `decodeText(text: string): string` | Decode to a string; throws on invalid UTF-8. |
 | `ALPHABET: string` | The 91 characters, in value order. |
+| `R_CHARS: number[]` | The eight substituted byte values, in mask-bit order. |
 | `PROFILES: string[]` | The donor profiles. |
 | `CONSTANTS` | The frozen constants of the specification. |
 | `makeCodec(config)` | The parameterised core, for experiments. |
@@ -202,7 +224,7 @@ have.
 
 ## Specification
 
-[`spec/base91-jdp-v0.1.0.md`](spec/base91-jdp-v0.1.0.md) defines the format
+[`spec/base91-jdp-v0.2.0.md`](spec/base91-jdp-v0.2.0.md) defines the format
 completely: alphabet, the threshold change that frees `--`, the passthrough
 signal and its header, the prefix scan, canonicity, error handling, and the
 measurements behind every constant.
@@ -219,6 +241,7 @@ python3 bench/corpus.py     # fetch the benchmark corpus (pinned, verified)
 npm run bench               # the size tables
 npm run bench:sweep         # the parameter sweeps
 npm run bench:signal        # the signal character, and why segments end
+npm run bench:fill          # what a run-length mode would be worth
 ```
 
 The Base85N column of the benchmark runs the upstream Go implementation

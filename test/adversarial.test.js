@@ -45,8 +45,8 @@ test('characters outside the alphabet are rejected', () => {
 });
 
 test('a header in the future signal space is rejected', () => {
-  const limit = 2 * 128 * PROFILES.length;
-  for (const h of [limit, limit + 1, 4000, 8280]) {
+  const limit = 2 * (1 << R_CHARS.length) * PROFILES.length;
+  for (const h of [limit, limit + 1, 6000, 8280]) {
     throwsWith(ERR.UNDEFINED_SIGNAL, () => decode(SIGNAL + pair(h) + 'hello there'));
   }
   // one below the limit is a valid signal
@@ -112,9 +112,30 @@ test('donor profiles are structurally sound', () => {
   }
 });
 
-test('the R-Set is disjoint from the alphabet', () => {
+test('the R-Set is the alphabet\'s complement in text, plus the signal character', () => {
   assert.equal(new Set(R_CHARS).size, R_CHARS.length);
-  for (const c of R_CHARS) assert.ok(!A.includes(String.fromCharCode(c)));
+  for (const c of R_CHARS) {
+    const ch = String.fromCharCode(c);
+    // '-' is the one R-Set member that is in the alphabet: it is substituted
+    // not because it cannot be written but because two of them end a segment.
+    if (ch === '-') continue;
+    assert.ok(!A.includes(ch), `${JSON.stringify(ch)} is in the alphabet`);
+  }
+  assert.ok(R_CHARS.includes('-'.charCodeAt(0)));
+});
+
+test('a passthrough payload never contains the signal character at all', () => {
+  const src = new TextEncoder().encode(
+    '--bs-blue: #0d6efd; --bs-indigo: #6610f2; --bs-purple: #6f42c1; ' +
+      '--bs-pink: #d63384; --bs-red: #dc3545; --bs-orange: #fd7e14;',
+  );
+  const enc = encode(src);
+  // Every '-' in the output belongs to a signal, so they come in pairs at
+  // positions the decoder reaches; none is ever payload.
+  const stats = enc.split('').filter((c) => c === '-').length;
+  assert.equal(stats % 2, 0);
+  assert.ok(stats <= 4, `${stats} hyphens for a segment or two, not one per input '-'`);
+  assert.deepEqual(decode(enc), src);
 });
 
 test('no emitted segment contains the signal pair or ends on its character', () => {
