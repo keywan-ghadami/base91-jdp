@@ -2,23 +2,29 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Three ways to turn bytes into characters of the JSON-safe alphabet, so that
-// bench/rsstudy.js can measure what each costs and what each loses when a bit
-// flips.
+// The packing layer: bytes to characters of the JSON-safe alphabet.
 //
-//   adaptive   basE91 unchanged: two characters carry 13 or 14 bits, and which
-//              one is decided by the value of the pair. Densest by 0.085 %,
-//              and the only one where a flipped character can shift every bit
-//              that follows it.
-//   synchronous  13 bytes = 104 bits = 8 pairs of 13 bits = 16 characters,
-//              exactly. Each pair is independent, so a flipped character
-//              damages the two or three bytes its 13 bits touch and nothing
-//              else. This is also the only variant with a symbol layer a
-//              Reed-Solomon code can sit on: one pair is one GF(2^13) symbol.
+// Two characters are one pair, worth `d0 + 91 * d1` -- the low digit first, as
+// basE91 writes it. A pair has 8281 values and the packer uses 8192 of them:
+// 13 bytes = 104 bits = 8 symbols of 13 bits = 16 characters, exactly. Each
+// pair stands on its own, so a flipped character damages the two or three
+// bytes its 13 bits touch and nothing beyond them, and one pair is one
+// GF(2^13) symbol, which is what lets Reed-Solomon sit on top for the price of
+// nsym/n.
 //
-// The third variant of the study, adaptive-with-realignment, is the adaptive
-// coder applied to each segment separately; bench/rsstudy.js builds it from
-// `encodeAdaptive` rather than needing anything here.
+// That leaves 8192..8280, eighty-nine values no packed stream can contain.
+// They carry everything the format needs to say about itself:
+//
+//   8280         the separator "--": it opens and closes a passthrough segment
+//                and it divides one framed segment from the next
+//   8192..8279   at the head of a stream, the mode marker (src/marker.js);
+//                anywhere else, a symbol from the side-channel window carrying
+//                one extra bit at no cost in characters (src/frame.js)
+//
+// `encodeAdaptive` is basE91 as Joachim Henke wrote it, on this alphabet. It
+// is not part of the format -- it is denser by 0.085 % and gives that back the
+// moment a character is damaged, which is what bench/rsstudy.js measured. It
+// stays as the reference the study is written against.
 
 import { ALPHABET } from './codec.js';
 
@@ -31,6 +37,22 @@ export const SYMBOL_BITS = 13;
 export const SYMBOL_MAX = 1 << SYMBOL_BITS; // 8192 values, 0..8191
 export const GROUP_BYTES = 13;
 export const GROUP_CHARS = 16;
+
+/** Pair values: 91 * 91. The packer reaches 8192 of them, the format the rest. */
+export const PAIR_MAX = 91 * 91; // 8281
+
+/** `--`. Never a packed symbol, so it needs no escaping rule anywhere. */
+export const SEPARATOR_VALUE = PAIR_MAX - 1; // 8280
+
+// The side channel. A symbol in the window may be written 88 higher without
+// changing the character count, which is one bit for free; 8280 stays out of
+// it so that the separator remains the one value nothing else can produce.
+export const SIDE_OFFSET = 88;
+export const SIDE_LOW = SYMBOL_MAX - SIDE_OFFSET; // 8104; window is 8104..8191
+export const SIDE_RATE = SIDE_OFFSET / SYMBOL_MAX; // 1.074 % of symbols
+
+/** Whether a (corrected) symbol value sits in the side-channel window. */
+export const carriesSide = (v) => v >= SIDE_LOW && v < SYMBOL_MAX;
 
 export class PackError extends Error {
   constructor(message) {
@@ -101,28 +123,34 @@ export function bytesFromSymbols(symbols, tailBits) {
 // Character layer
 // ---------------------------------------------------------------------
 
-/** Every symbol as a full pair. Used when a code has appended parity. */
+/** Every value as a full pair, low digit first. Values up to 8280 are fine:
+ *  that is what the separator and the side channel are made of. */
 export function charsFromSymbols(symbols) {
   const out = new Uint8Array(symbols.length * 2);
   for (let i = 0; i < symbols.length; i++) {
     const v = symbols[i];
-    out[2 * i] = CHR[(v / 91) | 0];
-    out[2 * i + 1] = CHR[v % 91];
+    out[2 * i] = CHR[v % 91];
+    out[2 * i + 1] = CHR[(v / 91) | 0];
   }
   return latin1(out);
 }
 
-/** The inverse. A pair outside 0..8191 is clamped, not rejected: handing the
- *  damaged symbol to the error-correcting layer is the whole point. */
-export function symbolsFromChars(text) {
+/** The inverse, keeping every value the characters actually spell, 0..8280. */
+export function pairsFromChars(text) {
   if (text.length % 2 !== 0) throw new PackError('an odd number of characters');
-  const symbols = new Uint16Array(text.length / 2);
-  for (let i = 0; i < symbols.length; i++) {
-    const d0 = digit(text.charCodeAt(2 * i));
-    const d1 = digit(text.charCodeAt(2 * i + 1));
-    symbols[i] = (d0 * 91 + d1) & (SYMBOL_MAX - 1);
+  const pairs = new Uint16Array(text.length / 2);
+  for (let i = 0; i < pairs.length; i++) {
+    pairs[i] = digit(text.charCodeAt(2 * i)) + digit(text.charCodeAt(2 * i + 1)) * 91;
   }
-  return symbols;
+  return pairs;
+}
+
+/** The inverse as symbols. A pair outside 0..8191 is clamped, not rejected:
+ *  handing the damaged symbol to the error-correcting layer is the point. */
+export function symbolsFromChars(text) {
+  const pairs = pairsFromChars(text);
+  for (let i = 0; i < pairs.length; i++) pairs[i] &= SYMBOL_MAX - 1;
+  return pairs;
 }
 
 // ---------------------------------------------------------------------
@@ -138,15 +166,15 @@ export function encodeSynchronous(bytes) {
   let o = 0;
   for (let i = 0; i < full; i++) {
     const v = symbols[i];
-    out[o++] = CHR[(v / 91) | 0];
     out[o++] = CHR[v % 91];
+    out[o++] = CHR[(v / 91) | 0];
   }
   if (tail === 1) {
     out[o++] = CHR[symbols[full]];
   } else if (tail === 2) {
     const v = symbols[full];
-    out[o++] = CHR[(v / 91) | 0];
     out[o++] = CHR[v % 91];
+    out[o++] = CHR[(v / 91) | 0];
   }
   return latin1(out);
 }
@@ -166,7 +194,7 @@ export function decodeSynchronous(text) {
   for (let i = 0; i < full; i++) {
     const d0 = digit(text.charCodeAt(2 * i));
     const d1 = digit(text.charCodeAt(2 * i + 1));
-    symbols[i] = (d0 * 91 + d1) & (SYMBOL_MAX - 1);
+    symbols[i] = (d0 + d1 * 91) & (SYMBOL_MAX - 1);
   }
   if (tailBits) {
     let v;
@@ -175,7 +203,7 @@ export function decodeSynchronous(text) {
     } else {
       const d0 = digit(text.charCodeAt(full * 2));
       const d1 = digit(text.charCodeAt(full * 2 + 1));
-      v = d0 * 91 + d1;
+      v = d0 + d1 * 91;
     }
     symbols[full] = v & ((1 << tailBits) - 1);
   }
@@ -241,6 +269,62 @@ export function decodeAdaptive(text) {
   }
   if (v >= 0) out[o++] = (b | (v << n)) & 0xff;
   return out.subarray(0, o);
+}
+
+// ---------------------------------------------------------------------
+// Side channel
+// ---------------------------------------------------------------------
+
+/**
+ * Write bits into a run of symbols, in place. A symbol in the window is raised
+ * by SIDE_OFFSET to mean 1 and left alone to mean 0; the character count does
+ * not move either way, so the bits are free.
+ *
+ * @param {Uint16Array} symbols packed values, 0..8191
+ * @param {(slot: number) => number} bitAt called once per slot, in order
+ * @returns {number} how many slots this run offered
+ */
+export function writeSide(symbols, bitAt) {
+  let slot = 0;
+  for (let i = 0; i < symbols.length; i++) {
+    if (carriesSide(symbols[i])) {
+      if (bitAt(slot)) symbols[i] += SIDE_OFFSET;
+      slot++;
+    }
+  }
+  return slot;
+}
+
+/**
+ * Read the side channel back.
+ *
+ * The slots are found from `symbols`, the values *after* error correction, and
+ * the bit values from `wire`, the values the characters actually spelled. That
+ * is what keeps a damaged symbol from shifting every bit that follows it: it
+ * costs one bit, at a position the reader knows is untrustworthy, because the
+ * wire value is then neither of the two the corrected value allows.
+ *
+ * @returns {{bits: Uint8Array, trusted: Uint8Array}}
+ */
+export function readSide(wire, symbols) {
+  const n = countSideSlots(symbols);
+  const bits = new Uint8Array(n);
+  const trusted = new Uint8Array(n);
+  let slot = 0;
+  for (let i = 0; i < symbols.length; i++) {
+    if (!carriesSide(symbols[i])) continue;
+    const raised = symbols[i] + SIDE_OFFSET;
+    bits[slot] = wire[i] === raised ? 1 : 0;
+    trusted[slot] = wire[i] === symbols[i] || wire[i] === raised ? 1 : 0;
+    slot++;
+  }
+  return { bits, trusted };
+}
+
+export function countSideSlots(symbols) {
+  let n = 0;
+  for (let i = 0; i < symbols.length; i++) if (carriesSide(symbols[i])) n++;
+  return n;
 }
 
 // ---------------------------------------------------------------------
