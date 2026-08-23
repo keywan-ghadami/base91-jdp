@@ -17,6 +17,7 @@
     "bin",
     "spec",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
