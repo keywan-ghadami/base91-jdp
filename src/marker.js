@@ -22,7 +22,7 @@
 // answer to "is this ours or is it classic?" -- which is what lets classic
 // basE91 stay out of band without a flag anywhere.
 
-import { ALPHABET, SIGNAL_VALUE } from './codec.js';
+import { ALPHABET, SIGNAL_VALUE, Base91JdpError, ERR } from './codec.js';
 import { SYMBOL_MAX } from './pack.js';
 
 export const MARKER_MIN = SYMBOL_MAX; // 8192
@@ -73,11 +73,15 @@ export function readMarker(pair) {
   if (pair < MARKER_MIN || pair > MARKER_MAX) return { headerless: true };
   const mode = BY_VALUE.get(pair);
   if (!mode) {
-    throw new RangeError(
-      pair === ESCAPE
-        ? 'this stream uses an extended header, which this version cannot read'
-        : `marker ${markerChars(pair)} names a mode this version does not know`,
-    );
+    throw pair === ESCAPE
+      ? new Base91JdpError(
+          ERR.EXTENDED_HEADER,
+          'this stream uses an extended header, which this version cannot read',
+        )
+      : new Base91JdpError(
+          ERR.UNKNOWN_MODE,
+          `marker ${markerChars(pair)} names a mode this version does not know`,
+        );
   }
   return { headerless: false, mode };
 }

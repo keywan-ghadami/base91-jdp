@@ -29,6 +29,7 @@
 // side of it merge. With SEGMENT_BYTES at 256 KiB that is at most 512 KiB of
 // payload for one flipped bit, whatever the size of the stream.
 
+import { Base91JdpError, ERR } from './codec.js';
 import { compress, decompress, Lz4Error } from './lz4.js';
 import { RS13, UncorrectableError } from './rs.js';
 import {
@@ -43,9 +44,9 @@ export const SEGMENT_BYTES = 1 << 18;
 export const RS_PARITY = 4;
 export const RS_DATA = 4096 - RS_PARITY;
 
-export class FrameError extends Error {
-  constructor(message, cause) {
-    super(message);
+export class FrameError extends Base91JdpError {
+  constructor(message, code = ERR.MALFORMED_FRAME, cause) {
+    super(code, message);
     this.name = 'FrameError';
     if (cause) this.cause = cause;
   }
@@ -114,7 +115,7 @@ function segmentPayload(bytes, useLz4, sizeHint) {
   try {
     return decompress(block, sizeHint);
   } catch (err) {
-    if (err instanceof Lz4Error) throw new FrameError(err.message, err);
+    if (err instanceof Lz4Error) throw new FrameError(err.message, ERR.MALFORMED_FRAME, err);
     throw err;
   }
 }

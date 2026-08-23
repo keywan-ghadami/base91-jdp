@@ -26,7 +26,7 @@
 // moment a character is damaged, which is what bench/rsstudy.js measured. It
 // stays as the reference the study is written against.
 
-import { ALPHABET } from './codec.js';
+import { ALPHABET, Base91JdpError, ERR } from './codec.js';
 
 const VAL = new Int16Array(256).fill(-1);
 for (let v = 0; v < ALPHABET.length; v++) VAL[ALPHABET.charCodeAt(v)] = v;
@@ -54,9 +54,12 @@ export const SIDE_RATE = SIDE_OFFSET / SYMBOL_MAX; // 1.074 % of symbols
 /** Whether a (corrected) symbol value sits in the side-channel window. */
 export const carriesSide = (v) => v >= SIDE_LOW && v < SYMBOL_MAX;
 
-export class PackError extends Error {
-  constructor(message) {
-    super(message);
+/** Characters that are not pairs of this alphabet at all. Part of the one
+ *  error family so that a caller has a single type to catch and a code to
+ *  switch on, whichever layer refused. */
+export class PackError extends Base91JdpError {
+  constructor(message, code = ERR.MALFORMED_PAIRS) {
+    super(code, message);
     this.name = 'PackError';
   }
 }

@@ -94,14 +94,32 @@ test('every alphabet string decodes or throws, but never hangs or crashes', () =
     const n = Math.floor(r() * 60);
     let s = '';
     for (let i = 0; i < n; i++) s += A[Math.floor(r() * 91)];
+    const marker = s.length >= 2 ? A.indexOf(s[0]) + 91 * A.indexOf(s[1]) : 0;
+    const headerless = marker < 8192 || marker > 8279;
     try {
       const out = decode(s);
-      // No expansion: a decoder can never write more than it reads.
-      assert.ok(out.length <= s.length, `${out.length} bytes from ${s.length} characters`);
+      // A headerless stream can never write more than it reads: passthrough is
+      // one character per byte and the block coder is sixteen per thirteen. A
+      // framed stream carries a compressor and has no such bound -- expansion
+      // is the entire point of it -- so there the invariant is only that the
+      // decoder finishes.
+      if (headerless) {
+        assert.ok(out.length <= s.length, `${out.length} bytes from ${s.length} characters`);
+      }
     } catch (err) {
-      assert.ok(err instanceof Base91JdpError, `${err}`);
+      assert.ok(err instanceof Base91JdpError, `${err.name}: ${err.message}`);
+      assert.ok(err.code, 'every rejection carries a code');
     }
   }
+});
+
+test('a framed stream may expand, and that is what compression is', () => {
+  // The counterpart to the bound above, so that its absence in the framed case
+  // is a stated property and not an oversight.
+  const zeros = new Uint8Array(1 << 20);
+  const enc = encode(zeros);
+  assert.ok(enc.length < 8000, `a megabyte of zeros became ${enc.length} characters`);
+  assert.equal(decode(enc).length, zeros.length);
 });
 
 test('donor profiles are structurally sound', () => {

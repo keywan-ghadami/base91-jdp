@@ -71,6 +71,16 @@ export const ERR = {
   // A pair in 8192..8279: no block coder can write one, so the stream is
   // damaged, or it is a framed stream being read as a headerless one.
   RESERVED_PAIR: 'RESERVED_PAIR',
+  // The marker names a mode this version has no code for.
+  UNKNOWN_MODE: 'UNKNOWN_MODE',
+  // The marker is the escape: a longer header this version cannot read.
+  EXTENDED_HEADER: 'EXTENDED_HEADER',
+  // A framed segment that error correction could not put back.
+  DAMAGED_SEGMENT: 'DAMAGED_SEGMENT',
+  // A framed segment whose own shape does not add up.
+  MALFORMED_FRAME: 'MALFORMED_FRAME',
+  // Characters that cannot be pairs at all: an odd count, or a stray byte.
+  MALFORMED_PAIRS: 'MALFORMED_PAIRS',
 };
 
 export class Base91JdpError extends Error {

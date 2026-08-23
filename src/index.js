@@ -19,7 +19,7 @@
  * See spec/ for the format.
  */
 
-import { makeCodec, significant } from './codec.js';
+import { makeCodec, significant, ERR } from './codec.js';
 import { PROFILES } from './profiles.js';
 import { charsFromSymbols, pairsFromChars, GROUP_BYTES } from './pack.js';
 import { markerChars, readMarker, modeByName } from './marker.js';
@@ -78,10 +78,11 @@ function worthProtecting(byteLength) {
   return symbols >= CONSTANTS.RS_MIN_SYMBOLS;
 }
 
+const PROTECT_VALUES = new Set(['auto', 'check', true, false]);
+
 /** A framed candidate: its segments compressed, its size known, unbuilt. */
 function candidate(bytes, useLz4, protect) {
-  const wanted =
-    protect === 'auto' ? worthProtecting(bytes.length) : protect !== false;
+  const wanted = protect === 'auto' ? worthProtecting(bytes.length) : protect === true;
   const mode = modeByName(
     useLz4 ? (wanted ? 'lz4' : 'lz4Checked') : wanted ? 'stored' : 'storedChecked',
   );
@@ -100,22 +101,37 @@ function candidate(bytes, useLz4, protect) {
  * The default weighs the candidates and returns the shortest, so the size at
  * which a marker starts paying for itself is measured rather than declared.
  *
+ * `protect` answers two questions that are easy to run together and must not
+ * be: whether error correction is wanted, and whether a frame is wanted at
+ * all. `true` asks for Reed-Solomon and takes the frame that comes with it.
+ * `'check'` asks for a frame with the side channel's check pattern but no
+ * parity -- damage reported, not repaired, at no cost in characters. `false`
+ * asks for no parity and leaves the frame to the size comparison, and `'auto'`
+ * turns parity on once it is close to free.
+ *
  * @param {Uint8Array|ArrayLike<number>} input
  * @param {object} [options]
  * @param {'auto'|'never'|'always'} [options.compress] LZ4, if it helps
- * @param {'auto'|boolean} [options.protect] Reed-Solomon; true forces a frame
+ * @param {'auto'|'check'|boolean} [options.protect] error correction and framing
  * @returns {string} characters from the alphabet only, safe inside a JSON string
  */
 export function encode(input, { compress = 'auto', protect = 'auto' } = {}) {
+  if (!PROTECT_VALUES.has(protect)) {
+    throw new RangeError(`protect must be 'auto', 'check', true or false, not ${JSON.stringify(protect)}`);
+  }
+  if (!['auto', 'never', 'always'].includes(compress)) {
+    throw new RangeError(`compress must be 'auto', 'never' or 'always', not ${JSON.stringify(compress)}`);
+  }
   const bytes = toBytes(input);
-  const headerlessAllowed = protect !== true && compress !== 'always';
+  const forceFrame = protect === true || protect === 'check';
+  const headerlessAllowed = !forceFrame && compress !== 'always';
 
   const framed = [];
   if (compress !== 'never') framed.push(candidate(bytes, true, protect));
-  // Framing without compression only wins when protection is asked for:
+  // Framing without compression only wins when a frame was asked for outright:
   // otherwise the headerless stream says the same thing in fewer characters,
   // marker and parity included.
-  if (protect === true && compress !== 'always') framed.push(candidate(bytes, false, protect));
+  if (forceFrame && compress !== 'always') framed.push(candidate(bytes, false, protect));
 
   let best = null;
   for (const c of framed) if (!best || c.chars < best.chars) best = c;
@@ -158,6 +174,7 @@ export function decode(text, { partial = false } = {}) {
     throw new FrameError(
       `segment ${segment} of ${body.segments} could not be recovered (${trouble[0].reason})` +
         (body.damaged.length > 1 ? ` and ${body.damaged.length - 1} more` : ''),
+      ERR.DAMAGED_SEGMENT,
     );
   }
   return body.bytes;
