@@ -7,13 +7,22 @@
 //   node bench/bench.js            raw and JSON-embedded ratios, per file
 //   node bench/bench.js --json     machine-readable
 //
+// Two comparisons matter and they are different questions. Against the plain
+// binary-to-text codecs, base91-jdp is being asked what an encoding costs.
+// Against deflate-then-encode -- what people actually do when size matters --
+// it is being asked whether carrying a compressor inside the encoding was
+// worth it. Both columns are here, and the second is the harder one.
+//
 // Base85N sizes come from bench/base85n (the upstream Go implementation,
-// v0.5.1) when Go is available; without it that column is left out rather
+// v0.5.1) when Go is available; without it those columns are left out rather
 // than filled in from its documentation.
 
 import { execFileSync } from 'node:child_process';
+import { deflateRawSync } from 'node:zlib';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { encode, decode } from '../src/index.js';
+import { encode, decode, decodeDetailed } from '../src/index.js';
 import { loadCorpus, BENCH_DIR, CORPUS_DIR } from './lib.js';
 import {
   base91Encode,
@@ -25,13 +34,21 @@ import {
 
 const corpus = loadCorpus();
 
-function base85nSizes() {
+// Deflate at level 6, the same setting on both sides of every comparison. An
+// earlier round of this benchmark compared our level 6 against a reference
+// built at level 9 and drew the wrong conclusion from a 0.9 % gap that was
+// the compressor's, not the codec's.
+const DEFLATE_LEVEL = 6;
+const deflated = new Map(corpus.map((f) => [f.name, deflateRawSync(f.data, { level: DEFLATE_LEVEL })]));
+
+function base85nSizes(dir) {
   try {
-    const out = execFileSync(
-      'go',
-      ['run', '.', ...corpus.map((f) => join(CORPUS_DIR, f.name))],
-      { cwd: join(BENCH_DIR, 'base85n'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-    );
+    const files = corpus.map((f) => join(dir ?? CORPUS_DIR, f.name));
+    const out = execFileSync('go', ['run', '.', ...files], {
+      cwd: join(BENCH_DIR, 'base85n'),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     const map = new Map();
     for (const line of out.trim().split('\n')) {
       const [path, , enc] = line.split('\t');
@@ -46,11 +63,40 @@ function base85nSizes() {
 
 const b85 = base85nSizes();
 
+// Base85N over deflated bytes, which is the strongest thing to compare
+// against: the best general-purpose JSON-safe encoding on top of a better
+// compressor than ours.
+let b85deflate = null;
+if (b85) {
+  const dir = mkdtempSync(join(tmpdir(), 'b91jdp-deflate-'));
+  try {
+    for (const f of corpus) writeFileSync(join(dir, f.name), deflated.get(f.name));
+    b85deflate = base85nSizes(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 const CODECS = [
   { key: 'base64', label: 'Base64', encode: base64Encode },
   { key: 'ascii85', label: 'Ascii85', encode: ascii85Encode },
   { key: 'base91', label: 'basE91', encode: base91Encode, decode: base91Decode },
   ...(b85 ? [{ key: 'base85n', label: 'Base85N', sizes: b85, jsonSafe: true }] : []),
+  {
+    key: 'b64deflate',
+    label: 'Base64+deflate',
+    encode: (data) => base64Encode(deflateRawSync(data, { level: DEFLATE_LEVEL })),
+  },
+  ...(b85deflate
+    ? [{ key: 'b85ndeflate', label: 'Base85N+deflate', sizes: b85deflate, jsonSafe: true }]
+    : []),
+  {
+    key: 'jdpPlain',
+    label: 'jdp, no LZ4',
+    encode: (data) => encode(data, { compress: 'never' }),
+    decode,
+    jsonSafe: true,
+  },
   { key: 'jdp', label: 'base91-jdp', encode, decode, jsonSafe: true },
 ];
 

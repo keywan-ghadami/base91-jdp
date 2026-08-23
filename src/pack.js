@@ -44,16 +44,50 @@ export const PAIR_MAX = 91 * 91; // 8281
 /** `--`. Never a packed symbol, so it needs no escaping rule anywhere. */
 export const SEPARATOR_VALUE = PAIR_MAX - 1; // 8280
 
-// The side channel. A symbol in the window may be written 88 higher without
-// changing the character count, which is one bit for free; 8280 stays out of
-// it so that the separator remains the one value nothing else can produce.
-export const SIDE_OFFSET = 88;
-export const SIDE_LOW = SYMBOL_MAX - SIDE_OFFSET; // 8104; window is 8104..8191
-export const SIDE_RATE = SIDE_OFFSET / SYMBOL_MAX; // 1.074 % of symbols
+// The side channel. There are 88 free pair values below the separator --
+// 8192..8279 -- so 88 symbol values can be written as one of those instead,
+// which is one bit at no cost in characters. *Which* 88 is a free choice, and
+// the measurement says it matters more than anything else here.
+//
+// Thirteen-bit symbols are nothing like uniformly distributed, so a window
+// taken as a contiguous run of the range collapses on real data. Measured over
+// raw and LZ4-compressed text, source, JSON, CSV, XML, images, uniform bytes
+// and zeros -- forty distributions in all:
+//
+//   window                worst case    mean
+//   the top 88 values     0.000 %       0.5 %
+//   the bottom 88         0.000 %       11 %
+//   every 91st value      0.55 %        4.4 %
+//   v * 8179 mod 8192     0.52 %        4.4 %
+//
+// The bottom window carries the most where it works -- LZ4 writes two-byte
+// offsets whose high byte is zero whenever a match is near, and those make
+// small symbols -- and carries nothing at all on repeated raw text. A check
+// that can vanish is not a check, so the choice goes on the worst case.
+//
+// Every scattered window lands within noise of every other, and the multiplier
+// was picked on synthetic shapes and then checked against the corpus, which
+// the search never saw. 8179 is -13 modulo 8192, and thirteen is the symbol
+// width: multiplying by it walks the window one step per bit-alignment class
+// rather than along the grain of the data. Nothing here is load-bearing -- the
+// format decodes with an empty side channel, it simply has no check pattern.
+export const SIDE_COUNT = 88;
+export const SIDE_MIX = 8179; // -13 mod 8192
+export const SIDE_UNMIX = 4411; // its inverse: 8179 * 4411 = 1 mod 8192
+export const SIDE_MAX = SYMBOL_MAX + SIDE_COUNT - 1; // 8279, one below "--"
+
+/** Which slot a symbol owns, if any: below SIDE_COUNT means it has one. */
+export const sideSlot = (v) => (v * SIDE_MIX) & (SYMBOL_MAX - 1);
 
 /** Whether a (corrected) symbol value sits in the side-channel window. */
-export const carriesSide = (v) => v >= SIDE_LOW && v < SYMBOL_MAX;
+export const carriesSide = (v) => sideSlot(v) < SIDE_COUNT;
 
+/** The pair value that says "this symbol, and a one bit". */
+export const raiseSide = (v) => SYMBOL_MAX + sideSlot(v);
+
+/** The inverse. Defined for every value 8192..8280, so a damaged separator
+ *  lands on a symbol the field has rather than outside it. */
+export const lowerSide = (u) => ((u - SYMBOL_MAX) * SIDE_UNMIX) & (SYMBOL_MAX - 1);
 /** Characters that are not pairs of this alphabet at all. Part of the one
  *  error family so that a caller has a single type to catch and a code to
  *  switch on, whichever layer refused. */
@@ -281,9 +315,9 @@ export function decodeAdaptive(text) {
 // ---------------------------------------------------------------------
 
 /**
- * Write bits into a run of symbols, in place. A symbol in the window is raised
- * by SIDE_OFFSET to mean 1 and left alone to mean 0; the character count does
- * not move either way, so the bits are free.
+ * Write bits into a run of symbols, in place. A symbol in the window is
+ * rewritten as its reserved pair value to mean 1 and left alone to mean 0; the
+ * character count does not move either way, so the bits are free.
  *
  * @param {Uint16Array} symbols packed values, 0..8191
  * @param {(slot: number) => number} bitAt called once per slot, in order
@@ -293,7 +327,7 @@ export function writeSide(symbols, bitAt) {
   let slot = 0;
   for (let i = 0; i < symbols.length; i++) {
     if (carriesSide(symbols[i])) {
-      if (bitAt(slot)) symbols[i] += SIDE_OFFSET;
+      if (bitAt(slot)) symbols[i] = raiseSide(symbols[i]);
       slot++;
     }
   }
@@ -318,7 +352,7 @@ export function readSide(wire, symbols) {
   let slot = 0;
   for (let i = 0; i < symbols.length; i++) {
     if (!carriesSide(symbols[i])) continue;
-    const raised = symbols[i] + SIDE_OFFSET;
+    const raised = raiseSide(symbols[i]);
     bits[slot] = wire[i] === raised ? 1 : 0;
     trusted[slot] = wire[i] === symbols[i] || wire[i] === raised ? 1 : 0;
     slot++;

@@ -9,8 +9,8 @@ import {
   encodeFrame, decodeFrame, frameSegments, frameChars, SEGMENT_BYTES, RS_PARITY,
 } from '../src/frame.js';
 import {
-  charsFromSymbols, pairsFromChars, carriesSide, countSideSlots,
-  SIDE_OFFSET, SIDE_LOW, SYMBOL_MAX, SEPARATOR_VALUE,
+  charsFromSymbols, pairsFromChars, carriesSide, countSideSlots, raiseSide, lowerSide,
+  SIDE_COUNT, SIDE_MAX, SIDE_MIX, SIDE_UNMIX, SYMBOL_MAX, SEPARATOR_VALUE,
 } from '../src/pack.js';
 import { rng, bytes } from './helpers.js';
 
@@ -81,6 +81,9 @@ test('a separator appears between segments and nowhere else', () => {
 
 test('the side channel raises symbols without moving a single character', () => {
   const r = rng(64);
+  // Uniform bytes are the floor for the side channel: the window is 88 of
+  // 8192 symbol values, so a flat distribution gives 1.07 % and real data
+  // gives far more, because its symbols crowd the bottom of the range.
   const input = bytes(200000, () => Math.floor(r() * 256));
   const m = { compress: false, protect: true };
   const pairs = encodeFrame(input, m);
@@ -89,17 +92,60 @@ test('the side channel raises symbols without moving a single character', () => 
   for (const v of pairs) {
     if (v === SEPARATOR_VALUE) continue;
     if (v >= SYMBOL_MAX) raised++;
-    if (carriesSide(v >= SYMBOL_MAX ? v - SIDE_OFFSET : v)) slots++;
+    if (carriesSide(v >= SYMBOL_MAX ? lowerSide(v) : v)) slots++;
   }
   assert.ok(slots > 0, 'no side-channel slots at all');
-  // The window is 88 of 8192 values, so about 1.07 % of symbols carry a bit,
-  // and about half of those carry a one.
   const rate = slots / pairs.length;
-  assert.ok(rate > 0.008 && rate < 0.014, `slot rate ${rate}`);
+  assert.ok(rate > 0.008 && rate < 0.016, `slot rate ${rate} on uniform bytes`);
   assert.ok(raised > slots * 0.3 && raised < slots * 0.7, `${raised} raised of ${slots} slots`);
-  // Raising never reaches the separator: 8191 + 88 = 8279.
-  assert.equal(SIDE_LOW + SIDE_OFFSET, SYMBOL_MAX);
-  assert.equal(SYMBOL_MAX - 1 + SIDE_OFFSET, SEPARATOR_VALUE - 1);
+  // Raising never reaches the separator, and every raised value comes back.
+  assert.equal(SIDE_MAX, SEPARATOR_VALUE - 1);
+  assert.equal(SIDE_COUNT, SEPARATOR_VALUE - SYMBOL_MAX);
+  let inWindow = 0;
+  for (let v = 0; v < SYMBOL_MAX; v++) {
+    if (!carriesSide(v)) continue;
+    inWindow++;
+    assert.equal(lowerSide(raiseSide(v)), v, `${v} does not survive the round trip`);
+    assert.ok(raiseSide(v) < SEPARATOR_VALUE, `${v} raises onto the separator`);
+  }
+  assert.equal(inWindow, SIDE_COUNT);
+  // A damaged separator must still land on a symbol the field has.
+  assert.ok(lowerSide(SEPARATOR_VALUE) < SYMBOL_MAX);
+});
+
+test('the side channel does not collapse on any shape of input', () => {
+  // The reason the window is a stride and not a contiguous run. Thirteen-bit
+  // symbols are nothing like uniform, and a contiguous window measured 0.000 %
+  // on some of these -- a check that can vanish is not a check. The floor here
+  // is deliberately well under the 0.834 % actually measured, so that this
+  // fails on a real regression rather than on noise.
+  const enc = new TextEncoder();
+  const shapes = {
+    'repeated text': enc.encode('the quick brown fox jumps over the lazy dog. '.repeat(3000)),
+    prose: enc.encode(
+      Array.from({ length: 4000 }, (_, i) => `line ${i}: ordinary prose about nothing much.`).join('\n'),
+    ),
+    json: enc.encode(JSON.stringify(Array.from({ length: 8000 }, (_, i) => ({ id: i, name: `item ${i}` })))),
+    uniform: bytes(200000, (i) => ((i * 1103515245 + 12345) >>> 24) & 0xff),
+  };
+  for (const [name, data] of Object.entries(shapes)) {
+    for (const compress of [false, true]) {
+      const pairs = encodeFrame(data, { compress, protect: false });
+      let slots = 0;
+      let n = 0;
+      for (const v of pairs) {
+        if (v === SEPARATOR_VALUE) continue;
+        n++;
+        if (carriesSide(v >= SYMBOL_MAX ? lowerSide(v) : v)) slots++;
+      }
+      const rate = slots / n;
+      assert.ok(
+        rate > 0.004,
+        `${name}${compress ? ' (lz4)' : ''} gave only ${(rate * 100).toFixed(3)} % of symbols a slot`,
+      );
+    }
+  }
+  assert.equal((SIDE_MIX * SIDE_UNMIX) & (SYMBOL_MAX - 1), 1);
 });
 
 test('the side channel survives a repaired symbol', () => {

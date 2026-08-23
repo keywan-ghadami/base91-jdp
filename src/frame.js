@@ -33,7 +33,7 @@ import { Base91JdpError, ERR } from './codec.js';
 import { compress, decompress, Lz4Error } from './lz4.js';
 import { RS13, UncorrectableError } from './rs.js';
 import {
-  SYMBOL_BITS, SYMBOL_MAX, SEPARATOR_VALUE, SIDE_OFFSET, GROUP_BYTES,
+  SYMBOL_BITS, SYMBOL_MAX, SEPARATOR_VALUE, lowerSide, GROUP_BYTES,
   symbolsFromBytes, bytesFromSymbols, carriesSide, writeSide, readSide, countSideSlots,
 } from './pack.js';
 
@@ -254,7 +254,7 @@ export function decodeFrame(pairs, { compress: useLz4 = false, protect = true } 
     const symbols = new Uint16Array(wire.length);
     for (let i = 0; i < wire.length; i++) {
       const v = wire[i];
-      symbols[i] = v >= SYMBOL_MAX ? Math.min(v - SIDE_OFFSET, SYMBOL_MAX - 1) : v;
+      symbols[i] = v >= SYMBOL_MAX ? lowerSide(v) : v;
     }
 
     const stride = protect ? RS_DATA + RS_PARITY : symbols.length;
