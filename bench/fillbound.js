@@ -2,7 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Upper-bound estimate for what a run-length (Fill) mode would be worth.
+// Upper-bound estimate for what a run-length (Fill) mode would be worth --
+// and, in the last-but-one column, what a real compressor does to the same
+// files instead. The point of the comparison is that the bound is generous to
+// Fill and still loses by a factor of three to six on every file Fill was
+// meant for, which is why base91-jdp has no such mode.
 //
 //   node bench/fillbound.js [minimum run length]
 //
@@ -12,6 +16,7 @@
 // a passthrough segment, 16/13 in block mode. This overstates the gain (it
 // ignores the cost of leaving and re-entering passthrough around a run inside
 // one) but bounds it.
+import { deflateRawSync } from 'node:zlib';
 import { encode } from '../src/index.js';
 import { loadCorpus } from './lib.js';
 import { makeCodec } from '../src/codec.js';
@@ -31,9 +36,12 @@ const MIN = Number(process.argv[2] ?? 5);
 const CAP = 2048;
 const SIGNAL_COST = 5;
 
-let totIn = 0, totOut = 0, totGain = 0;
-console.log(`| sample | now | runs >= ${MIN} | bytes in runs | estimated with Fill | Base85N |`);
-console.log('|---|---|---|---|---|---|');
+let totIn = 0, totOut = 0, totGain = 0, totPacked = 0;
+console.log(
+  `| sample | now | runs >= ${MIN} | bytes in runs | bound with Fill | ` +
+    `deflate first | Base85N |`,
+);
+console.log('|---|---|---|---|---|---|---|');
 
 // Base85N's published per-file figures, for the last column only; the tables in
 // RESULTS.md measure it live.
@@ -67,16 +75,23 @@ for (const f of corpus) {
     i = j;
   }
   const gain = runBytes * perByteNow - fillCost;
+  const packed = encode(deflateRawSync(f.data, { level: 9 })).length;
   totIn += f.data.length;
   totOut += out;
   totGain += Math.max(0, gain);
+  totPacked += Math.min(packed, out);
   console.log(
     `| ${f.name} | ${(out / f.data.length).toFixed(3)} | ${runs.toLocaleString('en-US')} | ` +
       `${((runBytes / f.data.length) * 100).toFixed(1)} % | ` +
-      `${((out - Math.max(0, gain)) / f.data.length).toFixed(3)} | ${b85[f.name]} |`,
+      `${((out - Math.max(0, gain)) / f.data.length).toFixed(3)} | ` +
+      `**${(packed / f.data.length).toFixed(3)}** | ${b85[f.name]} |`,
   );
 }
 console.log(
   `| whole corpus | ${(totOut / totIn).toFixed(5)} | | | ` +
-    `${((totOut - totGain) / totIn).toFixed(5)} | 1.00698 |`,
+    `${((totOut - totGain) / totIn).toFixed(5)} | **${(totPacked / totIn).toFixed(5)}** | 1.00698 |`,
+);
+console.log(
+  '\nThe deflate column takes the smaller of the two paths per file, which is' +
+    '\nwhat the rule in bench/gzipdecision.js chooses.',
 );

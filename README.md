@@ -123,23 +123,29 @@ base91-jdp  --EA{$user$:$ada$,$id$:42,$role$:$admin$}             41
 It loses everywhere Base85N's **Fill** mode has runs to work with: the zero
 padding in a block-aligned tar, the indentation in pretty-printed JSON, the long
 space runs in a specification document. base91-jdp has no run-length construct
-at all. That is the whole of the 7.7 % gap over the corpus, it is a known gap
-rather than a surprise, and §15 of the specification reserves 6 233 of the
-header's 8 281 values for closing it. Bounding what such a mode would be worth
-— `npm run bench:fill` — puts the corpus at 0.965, below Base85N; the bound is
-optimistic, but it shows the gap is one construct wide.
+at all, and that is a decision rather than an omission. The whole 7.7 % gap is
+that one construct — but the same files, deflated first, go to 0.332, and there
+base91-jdp is ahead of Base85N by 1.6 %. A mode that wins back a fifth of what a
+call to zlib wins, on exactly the payloads where zlib is available, is not worth
+the format complexity or the expansion bound it would cost. `npm run bench:fill`
+has the numbers; §15 of the specification keeps 6 233 header values reserved in
+case that judgement ever changes.
 
 ### So which should you use?
 
 * Output goes into **XML, HTML or an SVG attribute** → not this. `<`, `>` and
   `&` are all in this alphabet. Use [Base85N](https://base85n.ghadami.de/),
   whose alphabet contains none of them.
-* Payload has **long runs of one byte** — zero padding, deep indentation →
-  Base85N. Its Fill mode wins by more than the alphabet loses.
-* Payload is **ordinary text with no long runs** — minified JSON, CSS, a log
-  line, source without deep indentation → base91-jdp, narrowly.
+* **You can compress before encoding** → base91-jdp, on everything, by 1.6 %.
+  See [Compress first](#compress-first--and-how-to-know-when); this is the case
+  the format is built for and the one where the split below stops mattering.
 * Payload is **incompressible binary in JSON** — a key, a hash, a thumbnail, a
   compressed blob, a media file → base91-jdp, by 1.2 % to 2.5 %.
+* Payload has **long runs of one byte** and must go in **uncompressed** — zero
+  padding, deep indentation → Base85N. Its Fill mode wins by more than the
+  alphabet loses.
+* Payload is **ordinary text with no long runs**, uncompressed — minified JSON,
+  CSS, a log line → base91-jdp, narrowly.
 * Payload is a **short JSON or text field in a JSON document** → base91-jdp, by
   a character or two.
 * You already use **basE91** and the output lands in JSON → base91-jdp, by
@@ -192,23 +198,94 @@ gzip -9 < dump.bin | base91jdp -w 100    # wrap at 100 characters
 Input is treated as raw bytes; output carries no trailing newline. Whitespace is
 skipped on decode, so wrapped output decodes without preprocessing.
 
-## Compress first
+## Compress first — and how to know when
 
-base91-jdp is a transcoder, not a compressor. For payloads over a few hundred
-bytes, compress before encoding:
+base91-jdp is a transcoder, not a compressor. It has no run-length or dictionary
+construct on purpose: the answer to a payload with structure in it is a real
+compressor, not a mode. Deflate output is incompressible, so it encodes at a
+flat 1.2308 — which is exactly the case base91-jdp is best at.
+
+**And that is where it wins outright.** Deflate the corpus first and the
+comparison stops splitting, because once the payload is incompressible the
+alphabet is the only thing left:
+
+| whole corpus, deflate -9 then encoded | characters per input byte |
+|---|---|
+| Base85N | 0.33741 |
+| **base91-jdp** | **0.33194** — 1.6 % smaller |
+
+The same 1.5 % that shows up on a JPEG shows up on everything, because
+compression has turned everything into a JPEG as far as an encoder is concerned.
+A run-length mode would not get close: bounding one generously puts the corpus
+at 0.965 where deflate reaches 0.332, so the construct base91-jdp declined to
+build is worth about a fifth of what calling zlib is worth.
+
+That leaves the caller one decision, and it is not obvious, because passthrough
+already carries text at 1.0. **Deflating pays exactly when deflate compresses to
+below 81 %** — `1 / 1.2308` — of what passthrough would have charged.
+
+Measured over 6 174 payloads from 64 B to 256 KiB (`npm run bench:gzip`):
+
+| payload | deflate wins |
+|---|---|
+| deflate ratio < 0.8 | 100 %, at every size from 64 B up |
+| deflate ratio 0.8–1.0 | 16 % at 64 B, 58 % at 128 B, 100 % from 512 B |
+| deflate expands it | never |
+
+So the decision is essentially *does deflate compress this at all*, with a
+size correction that only bites below 256 bytes.
+
+**Below ~4 KB, do not predict — try both.** Deflating 4 KB takes 0.046 ms; the
+two encodes cost less than the branch is worth arguing about.
+
+**Above that, 512 bytes of prefix are enough.** Deflate the first 512 bytes,
+encode the first 512 bytes, and compare the two rates:
 
 ```js
-const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
-const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
-encode(compressed);
+import { deflateRawSync } from 'node:zlib';
+import { encode } from 'base91-jdp';
+
+const PROBE = 512;
+const BLOCK = 16 / 13;          // what block mode charges per byte
+
+function encodeSmart(bytes) {
+  const deflate = (b) => deflateRawSync(b, { level: 9 });
+  if (bytes.length <= 4096) {                       // cheap enough to try both
+    const a = encode(bytes);
+    const b = encode(deflate(bytes));
+    return b.length < a.length ? { deflated: true, text: b } : { deflated: false, text: a };
+  }
+  const probe = bytes.subarray(0, PROBE);
+  const jdpRate = encode(probe).length / PROBE;     // ~1.0 text, ~1.23 binary
+  const gzRate = deflate(probe).length / PROBE;
+  return BLOCK * gzRate < jdpRate
+    ? { deflated: true, text: encode(deflate(bytes)) }
+    : { deflated: false, text: encode(bytes) };
+}
 ```
 
-Compressed input is exactly the case base91-jdp is best at: it is incompressible
-by then, so passthrough never fires and the alphabet is the whole game.
+How the prefix size pays off, over payloads longer than the prefix:
 
-Do not gzip payloads under ~100 bytes — the header costs more than it saves. For
-those, encode directly, and passthrough will do better than compression would
-have.
+| bytes inspected | decisions correct | bytes lost against a perfect oracle |
+|---|---|---|
+| 128 | 89.2 % | 21.3 % |
+| 256 | 99.4 % | 1.9 % |
+| **512** | **99.8 %** | **0.002 %** |
+| 4096 | 99.2 % | 0.002 % |
+
+512 is where the curve stops moving. The probe costs **0.038 ms** against
+**74.6 ms** to deflate a 1.4 MB payload outright — two thousand times cheaper
+than finding out the hard way.
+
+The residual 0.002 % is not a rounding artefact of the rule; it is what the
+remaining mistakes are worth. They are all near-ties: where deflate neither
+compresses nor expands, the two paths land within 0.2 % of each other (median),
+so picking the wrong one costs almost nothing. The decisions that matter are the
+easy ones.
+
+Note that the stream does not record which path you took — there is no
+"deflated" bit in the format. Carry it yourself, in a sibling JSON field or a
+one-character prefix of your own.
 
 ## Safety properties
 

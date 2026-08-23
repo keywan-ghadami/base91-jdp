@@ -9,7 +9,8 @@
 
 > **Draft.** The wire format described here is complete and implemented, but it
 > has not been in the field. Section 9 keeps 6 233 of the 8 281 header values
-> free, and a future version is expected to spend some of them (Section 15).
+> free; Section 15 says what they are held for and why nothing has been spent
+> on them.
 >
 > **Changed in 0.2.0.** `-` joined the R-Set (Section 4.2). It is the one R-Set
 > member that *is* in the alphabet: it is substituted not because it cannot be
@@ -762,35 +763,54 @@ reads as data.
 
 * **The corpus is 13 files.** Every constant in Section 6.9 sits on a plateau
   rather than at a fitted optimum, for that reason.
-* **There is no run-length construct.** A zero-padded ELF, a block-padded tar
-  and pretty-printed JSON indentation are all carried at 1.0 or 1.2308 where a
-  Fill mode would carry them at almost nothing. That is the whole of the gap to
-  Base85N on this corpus, and Section 9 leaves the space to close it. Bounding
-  the gain by assuming every run of five or more identical bytes cost five
-  characters puts the whole corpus at 0.965 — below Base85N's 1.007 — with 36 %
-  of `countries.json` and 34 % of the tar and the ELF sitting in such runs.
+* **There is no run-length construct**, by decision rather than omission
+  (Section 15). A zero-padded ELF, a block-padded tar and pretty-printed JSON
+  indentation are all carried at 1.0 or 1.2308 where a Fill mode would carry
+  them at almost nothing, and that is the whole of the gap to Base85N on this
+  corpus. Deflating first closes it and more.
 * **UTF-8 above U+007F breaks passthrough.** A multi-byte character is not
   representable, so prose in a language that uses accents runs through block
   mode. `commonmark-spec.txt` and `requests-history.md` both pay for this.
 
 ---
 
-## 15. Future signal space (informative)
+## 15. The run-length mode this format does not have (informative)
 
 6 233 of the header's 8 281 values are unassigned, and one obvious construct
 would fit in them: a run-length mode along the lines of Base85N's Fill,
 carrying a repeated byte and a length instead of a payload. A header value of
 2 048 or more could mean "a fill, and one further header character follows",
 which gives `6233 × 91 = 567 203` states — enough for any byte value and a
-length to 2 048 — at five characters plus the pending bits. Section 14.7 bounds
-what it would be worth on this corpus at 0.965 characters per byte, against
-1.084 today and Base85N's 1.007.
+length to 2 048 — at five characters plus the pending bits.
 
-It is deliberately not in version 0.2.0. Adding it changes the security
-argument of Section 13 — a decoder that can be made to write more than it reads
-needs an expansion bound, and this one currently does not need one at all — and
-it needs the run-break rule inside a passthrough segment that Base85N spends
-its section 6.2 on, with a threshold of its own to measure.
+**It is deliberately absent, and the reason is measured rather than aesthetic.**
+A generous bound on what such a mode would be worth puts the benchmark corpus at
+0.965 characters per byte, against 1.084 without it. Deflating the same corpus
+first and encoding the result reaches **0.332**. On `countries.json`, the file
+the construct is most obviously for — 36.9 % of it runs of eight to thirty-one
+spaces — the bound is 0.777 and deflate reaches 0.124, because deflate also has
+something to say about the thousand repetitions of `"official"` that a run
+length cannot see.
+
+A construct worth a fifth of what a call to zlib is worth, on exactly the
+payloads where zlib is available, does not pay for what it costs:
+
+* the security argument of Section 13 changes. A decoder that cannot be made to
+  write more than it reads needs no expansion bound; one with a run-length mode
+  does;
+* it needs a run-break rule inside a passthrough segment, of the kind Base85N
+  spends its section 6.2 on, with a threshold of its own to derive and defend;
+* it adds a third mode to a format whose case for existing is that it is basE91
+  with one character changed.
+
+The division of labour is the other way round. Compression is the caller's job,
+and it is the case this format is *built* for: deflate output is incompressible,
+so it never leaves block mode, and block mode is where 91 characters beat 85.
+Encoding the deflated corpus, Base85N reaches 0.33741 and base91-jdp 0.33194 —
+1.6 % smaller, on every file rather than on four of them.
+
+The header space stays reserved in case that judgement ever changes. Nothing in
+this version depends on it.
 
 ---
 

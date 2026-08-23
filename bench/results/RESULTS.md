@@ -8,6 +8,7 @@ node bench/bench.js         # the size tables
 node bench/sweep.js         # the parameter sweeps
 node bench/signalchar.js    # the signal character, and why segments end
 node bench/fillbound.js     # what a run-length mode would be worth
+node bench/gzipdecision.js  # when to deflate first, and how few bytes decide it
 ```
 
 ## Method
@@ -362,43 +363,172 @@ representation.
 
 ---
 
-## What a Fill mode would be worth
+## The run-length mode this format does not have
 
-Every remaining loss against Base85N is its Fill mode. This bounds what closing
-that gap would be worth, by assuming each maximal run of five or more identical
-bytes could be carried by a five-character signal covering up to 2 048 bytes,
-and that those bytes currently cost what the encoder actually spends on them
-(1.0 inside a passthrough segment, 16/13 in block mode). It is an upper bound:
-it ignores the cost of leaving and re-entering passthrough around a run inside a
-segment, and it assumes lengths land exactly.
+Every loss against Base85N in the table above is its Fill mode. This section
+bounds what closing that gap would be worth, and then measures the alternative,
+which is why the gap stays open.
 
-| sample | now | runs ≥ 5 | bytes in runs | bound with Fill | Base85N |
+The bound assumes each maximal run of five or more identical bytes could be
+carried by a five-character signal covering up to 2 048 bytes, and that those
+bytes currently cost what the encoder actually spends on them (1.0 inside a
+passthrough segment, 16/13 in block mode). It is generous: it ignores the cost
+of leaving and re-entering passthrough around a run inside a segment, and it
+assumes lengths land exactly.
+
+| sample | now | runs >= 5 | bytes in runs | bound with Fill | deflate first | Base85N |
+|---|---|---|---|---|---|---|
+| sql-wasm.wasm | 1.208 | 864 | 1.0 % | 1.203 | **0.602** | 1.239 |
+| _cffi_backend.so | 1.187 | 51,534 | 34.9 % | 1.001 | **0.428** | 0.965 |
+| DejaVuSans.ttf | 1.217 | 412 | 1.2 % | 1.206 | **0.627** | 1.232 |
+| requests-2.32.3.tar | 1.044 | 7,819 | 34.3 % | 0.739 | **0.245** | 0.767 |
+| countries.json | 1.000 | 41,072 | 36.9 % | 0.777 | **0.124** | 0.935 |
+| countries.min.json | 1.000 | 87 | 0.1 % | 1.000 | **0.202** | 1.003 |
+| lodash.js | 1.001 | 13,064 | 14.4 % | 0.977 | **0.219** | 1.004 |
+| bootstrap.css | 1.001 | 108 | 0.3 % | 1.000 | **0.144** | 1.003 |
+| requests-models.py | 1.002 | 694 | 21.1 % | 0.889 | **0.343** | 0.973 |
+| commonmark-spec.txt | 1.005 | 1,450 | 21.1 % | 0.829 | **0.274** | 0.859 |
+| requests-history.md | 1.002 | 161 | 4.8 % | 0.967 | **0.406** | 0.979 |
+| grace_hopper.jpg | 1.229 | 3 | 0.1 % | 1.228 | **1.226** | 1.249 |
+| minduka_present.png | 1.229 | 0 | 0.0 % | 1.229 | **1.229** | 1.25 |
+| whole corpus | 1.08442 | | | 0.96471 | **0.33194** | 1.00698 |
+
+The deflate column takes the smaller of the two paths per file, which is
+what the rule in bench/gzipdecision.js chooses.
+
+Read the last three columns across. **The generous bound on a Fill mode reaches
+0.965; deflating the same corpus first reaches 0.332.** On `countries.json` —
+the file Fill was most obviously for, 36.9 % of it space runs eight to
+thirty-one long — Fill would reach 0.777 and deflate reaches 0.124, six times
+better, because deflate also has something to say about the thousand repetitions
+of `"official"` that a run-length mode cannot see.
+
+So the construct is worth about a fifth of what a call to zlib is worth, on
+exactly the payloads where zlib is available. It would also cost the property
+that Section 13 of the specification currently gets for free: a decoder that
+cannot be made to write more than it reads needs no expansion bound, and one
+with a run-length mode does.
+
+**And compression is where base91-jdp stops splitting the decision at all.**
+Deflate the corpus and encode the result:
+
+| whole corpus, deflate -9 then encoded | characters per input byte |
+|---|---|
+| Base85N | 0.33741 |
+| **base91-jdp** | **0.33194** |
+
+1.6 % smaller, across the board rather than on four files. Once the payload is
+incompressible the alphabet is the only thing left, and 91 characters carry
+13 bits per two where 85 carry 32 per five. Compression turns every payload into
+the case base91-jdp already won.
+
+The remaining question is therefore not whether to build Fill. It is when to
+compress — measured next.
+
+---
+
+## When to deflate first, and how few bytes decide it
+
+base91-jdp has no run-length or dictionary construct on purpose. A payload with
+structure in it belongs to a real compressor, and deflate output is
+incompressible, so it encodes at a flat 1.2308 — the case this format is best
+at. What that leaves the caller is one decision, and this section measures how
+cheaply it can be made.
+
+Passthrough carries text at 1.0, so deflating pays exactly when deflate
+compresses to below `1 / 1.2308 = 81.25 %` of what the direct path would have
+charged. The rule under test estimates both rates from the first N bytes:
+
+```
+a = |encode(prefix)|     / N      the direct cost per byte
+b = |deflateRaw(prefix)| / N      the compression ratio
+deflate  iff  (16/13) · b · len  <  a · len
+```
+
+A short prefix understates compression, because a cold dictionary finds no
+long-range matches, so the rule leans towards encoding directly. Buying that
+bias off is what N is for.
+
+### Rule A: deflate the prefix, encode the prefix
+
+| bytes inspected | payloads | correct | compressible | borderline | incompressible | near-ties correct | bytes lost vs the oracle |
+|---|---|---|---|---|---|---|---|
+| 32 | 6174 | 38.4 % | 31.6 % | 69.2 % | 99.5 % | 57.7 % | 127.796 % |
+| 64 | 5310 | 43.8 % | 42.8 % | 43.5 % | 100.0 % | 51.3 % | 94.594 % |
+| 128 | 4446 | 89.2 % | 89.4 % | 40.7 % | 98.6 % | 84.4 % | 21.271 % |
+| 256 | 3582 | 99.4 % | 99.7 % | 33.3 % | 98.3 % | 89.4 % | 1.928 % |
+| 512 | 2718 | 99.8 % | 100.0 % | 40.0 % | 100.0 % | 88.9 % | 0.002 % |
+| 1024 | 1890 | 99.7 % | 100.0 % | 25.0 % | 100.0 % | 85.7 % | 0.002 % |
+| 2048 | 1254 | 99.5 % | 100.0 % | 14.3 % | 100.0 % | 80.0 % | 0.002 % |
+| 4096 | 768 | 99.2 % | 100.0 % | 0.0 % | 100.0 % | 66.7 % | 0.002 % |
+| 8192 | 414 | 98.6 % | 100.0 % | 0.0 % | -- | 0.0 % | 0.002 % |
+| 16384 | 168 | 100.0 % | 100.0 % | -- | -- | -- | 0.000 % |
+
+### Rule B: deflate the prefix, estimate the direct cost by a byte scan
+
+No encoding at all -- just the share of bytes passthrough can carry.
+
+| bytes inspected | payloads | correct | compressible | borderline | incompressible | near-ties correct | bytes lost vs the oracle |
+|---|---|---|---|---|---|---|---|
+| 32 | 6174 | 24.4 % | 14.9 % | 70.6 % | 100.0 % | 54.9 % | 150.035 % |
+| 64 | 5310 | 31.5 % | 29.7 % | 42.2 % | 100.0 % | 50.7 % | 117.314 % |
+| 128 | 4446 | 77.9 % | 77.9 % | 25.9 % | 100.0 % | 85.6 % | 42.154 % |
+| 256 | 3582 | 98.9 % | 99.2 % | 26.7 % | 100.0 % | 90.9 % | 5.370 % |
+| 512 | 2718 | 99.5 % | 99.8 % | 10.0 % | 100.0 % | 88.9 % | 0.416 % |
+| 1024 | 1890 | 99.7 % | 100.0 % | 25.0 % | 100.0 % | 85.7 % | 0.002 % |
+| 2048 | 1254 | 99.5 % | 100.0 % | 14.3 % | 100.0 % | 80.0 % | 0.002 % |
+| 4096 | 768 | 99.2 % | 100.0 % | 0.0 % | 100.0 % | 66.7 % | 0.002 % |
+| 8192 | 414 | 98.6 % | 100.0 % | 0.0 % | -- | 0.0 % | 0.002 % |
+| 16384 | 168 | 100.0 % | 100.0 % | -- | -- | -- | 0.000 % |
+
+### What the right answer actually is, by payload size
+
+| size | payloads | compressible | borderline | incompressible | overall |
 |---|---|---|---|---|---|
-| sql-wasm.wasm | 1.208 | 864 | 1.0 % | 1.203 | 1.239 |
-| _cffi_backend.so | 1.187 | 51,534 | 34.9 % | 1.001 | 0.965 |
-| DejaVuSans.ttf | 1.217 | 412 | 1.2 % | 1.206 | 1.232 |
-| requests-2.32.3.tar | 1.044 | 7,819 | 34.3 % | 0.739 | 0.767 |
-| countries.json | 1.000 | 41,072 | 36.9 % | 0.777 | 0.935 |
-| countries.min.json | 1.000 | 87 | 0.1 % | 1.000 | 1.003 |
-| lodash.js | 1.001 | 13,064 | 14.4 % | 0.977 | 1.004 |
-| bootstrap.css | 1.001 | 108 | 0.3 % | 1.000 | 1.003 |
-| requests-models.py | 1.002 | 694 | 21.1 % | 0.889 | 0.973 |
-| commonmark-spec.txt | 1.005 | 1,450 | 21.1 % | 0.829 | 0.859 |
-| requests-history.md | 1.002 | 161 | 4.8 % | 0.967 | 0.979 |
-| grace_hopper.jpg | 1.229 | 3 | 0.1 % | 1.228 | 1.249 |
-| minduka_present.png | 1.229 | 0 | 0.0 % | 1.229 | 1.250 |
-| **whole corpus** | **1.08442** | | | **0.96471** | **1.00698** |
+| 64 B | 864 | 100 % (234) | 16 % (533) | 0 % (97) | 37 % (864) |
+| 128 B | 864 | 100 % (639) | 58 % (210) | 0 % (15) | 88 % (864) |
+| 256 B | 864 | 100 % (839) | 83 % (12) | 0 % (13) | 98 % (864) |
+| 512 B | 864 | 100 % (847) | 100 % (5) | 0 % (12) | 99 % (864) |
+| 1024 B | 828 | 100 % (814) | 100 % (2) | 0 % (12) | 99 % (828) |
+| 2048 B | 636 | 100 % (623) | 100 % (1) | 0 % (12) | 98 % (636) |
+| 4096 B | 486 | 100 % (473) | 100 % (1) | 0 % (12) | 98 % (486) |
+| 8192 B | 354 | 100 % (342) | -- | 0 % (12) | 97 % (354) |
+| 16384 B | 246 | 100 % (240) | 100 % (6) | -- | 100 % (246) |
+| 65536 B | 114 | 100 % (114) | -- | -- | 100 % (114) |
+| 262144 B | 54 | 100 % (54) | -- | -- | 100 % (54) |
 
-A third of `countries.json`, of the ELF and of the tar is inside such runs. The
-bound puts the whole corpus below Base85N and eleven of the thirteen files ahead
-of it — the two exceptions being the ELF and `requests-models.py`, where
-Base85N's tail variant carries the two literal bytes beside a short zero run as
-well.
+Share of payloads where deflating first gives the smaller output, with the
+number of payloads in that cell in brackets.
 
-The realistic figure is worse than the bound and the honest thing to say is that
-it has not been built. What the bound does establish is that the remaining gap
-is one construct wide, and that the construct is the one §15 of the
-specification reserves space for.
+### How far apart the two paths are
+
+| payload | share | median gap | 90th percentile gap | share within 5 % |
+|---|---|---|---|---|
+| compressible | 85 % (5219) | 72.8 % | 218.0 % | 1 % |
+| borderline | 12 % (770) | 6.1 % | 14.7 % | 44 % |
+| incompressible | 3 % (185) | 7.6 % | 20.6 % | 49 % |
+
+**512 bytes is where the curve stops moving**: 99.8 % of decisions correct and
+0.002 % of bytes lost against a perfect oracle, against 1.9 % at 256 and 21 % at
+128. Rule B, which skips the encode and estimates the direct cost from the share
+of bytes passthrough could carry, needs 1 024 bytes to reach the same place — the
+encode is worth doing.
+
+Three things the tables say that the headline does not:
+
+* **The decision is mostly "does deflate compress this at all".** Where deflate
+  reaches 0.8, it wins at every size from 64 bytes up; where deflate expands, it
+  never wins. Only the 0.8–1.0 band depends on payload size, and only below 256
+  bytes.
+* **The residual 0.002 % is not the rule being imprecise, it is the mistakes
+  being cheap.** Every remaining error is a near-tie: where deflate neither
+  compresses nor expands, the two paths land within a few per cent of each
+  other. The decisions that carry weight are the ones the rule gets right.
+* **Below about 4 KB there is nothing to predict.** Deflating 4 KB takes
+  0.046 ms; running both paths and picking the smaller costs less than the
+  branch is worth arguing about. The probe earns its keep on large payloads:
+  0.038 ms for 512 bytes against 74.6 ms to deflate a 1.4 MB payload outright.
+
 
 ---
 
