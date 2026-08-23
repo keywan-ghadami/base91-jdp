@@ -1,54 +1,63 @@
 # base91-jdp
 
-**basE91 with a JSON-safe alphabet, and a passthrough mode that carries text at
-one character per byte.**
+**basE91 with a JSON-safe alphabet, LZ4 inside, and error correction that costs
+0.1 %.**
 
-[![Spec](https://img.shields.io/badge/spec-v0.2.0%20draft-yellow)](spec/base91-jdp-v0.2.0.md)
+[![Spec](https://img.shields.io/badge/spec-v0.3.0%20draft-yellow)](spec/base91-jdp-v0.3.0.md)
 [![License](https://img.shields.io/badge/license-MPL--2.0-green)](LICENSE)
 
 ```js
-import { encode, decode } from 'base91-jdp';
+import { encode, encodeText, decode } from 'base91-jdp';
 
-encode(new TextEncoder().encode('{"user":"ada","id":42,"role":"admin"}'));
+encodeText('{"user":"ada","id":42,"role":"admin"}');
 // --EA{$user$:$ada$,$id$:42,$role$:$admin$}      41 characters for 37 bytes
+
+encode(bigJsonArray);            // 17,181 bytes -> 4,522 characters
+// }-jB4X7mFz<0GYWxMi:mFQV0...   LZ4 inside, 0.263 characters per byte
 ```
 
-That output goes into a JSON string verbatim. No escaping, no `\"`, no `\\`,
-nothing that can break the document it sits in — and the payload is still
-legible, because `$` is standing in for the quotation mark and everything else
-is itself.
+Both go into a JSON string verbatim. No escaping, no `\"`, no `\\`, nothing
+that can break the document they sit in. Small payloads stay legible, because
+`$` is standing in for the quotation mark and everything else is itself; large
+ones get compressed, and the encoder decides which by measuring both.
 
 ---
 
 ## What it is
 
 [basE91](http://base91.sourceforge.net/) (Joachim Henke, 2005) is the densest
-widely-implemented binary-to-text encoding that stays in printable ASCII: two
-characters carry 13 or 14 bits, chosen adaptively, for about 81.3 % efficiency
-against Base64's 75 %. Its 91-character alphabet leaves out `\` and `'` — but
-not `"`, so its output has to be escaped inside a JSON string, and the density
-it gained on paper it gives back in the file.
+widely-implemented binary-to-text encoding that stays in printable ASCII. Its
+91-character alphabet leaves out `\` and `'` -- but not `"`, so its output has
+to be escaped inside a JSON string, and the density it gained on paper it gives
+back in the file.
 
 base91-jdp makes one substitution: **`"` leaves the alphabet and `-` takes its
 place.** With `"`, `\` and `'` all absent, and no character below `0x20`, the
 alphabet is disjoint from everything a JSON string has to escape. The encoded
 size *is* the final size.
 
-That substitution pays for a second feature. `-` lands on the alphabet's last
-value, 90, which makes the pair `--` the one two-character value the block coder
-can never produce — lower basE91's 14-bit threshold by one and value 8 280
-becomes unreachable, at a cost of one state in 8 281. That freed pair is the
-mode signal:
+That substitution decides everything else. `-` lands on the alphabet's last
+value, 90, so the pair `--` is worth 8 280 -- above anything a thirteen-bit
+symbol can spell. base91-jdp fixes symbols at thirteen bits where basE91 lets
+them float between thirteen and fourteen, which leaves **eighty-nine pair
+values no encoded stream can contain**. Those eighty-nine carry everything the
+format says about itself:
 
-* `--` in block mode switches **Dynamic Passthrough** on;
-* `--` in passthrough switches it off again.
+* **`--` opens and closes a passthrough segment**, in which text is written one
+  character per byte instead of being expanded 1.23x;
+* **the eighty-eight below it are mode markers**, two characters at the head of
+  a stream saying it carries LZ4, error correction, or both.
 
-In passthrough, input is written **one output character per input byte** instead
-of being expanded 1.25×. The seven byte values real text is full of and the
-alphabet does not contain — space, `"`, newline, `\`, carriage return, `'`, tab —
-are written as stand-ins borrowed from the alphabet's rarest characters, named
-per segment by a two-character header. There is no escape mechanism and no
-escape character; a segment either carries a byte or it does not.
+A stream that wants neither pays nothing at all: no marker, no header, no
+padding.
+
+### Passthrough
+
+The seven byte values real text is full of and the alphabet does not contain --
+space, `"`, newline, `\`, carriage return, `'`, tab -- are written as stand-ins
+borrowed from the alphabet's rarest characters, named per segment by a
+two-character header. There is no escape mechanism and no escape character; a
+segment either carries a byte or it does not.
 
 `-` is carried the same way, and that is worth its own sentence: it is the one
 stand-in that is *in* the alphabet, substituted not because it cannot be written
@@ -62,56 +71,107 @@ encodeText('--bs-blue: #0d6efd; --bs-indigo: #6610f2; --bs-purple: #6f42c1;');
 //        67 characters for 63 bytes -- `~` stands in for `-`, `$` for the space
 ```
 
-When a byte cannot be carried — a UTF-8 continuation byte, a byte of a JPEG —
+When a byte cannot be carried -- a UTF-8 continuation byte, a byte of a JPEG --
 the segment ends and the bytes go through the block coder until passthrough is
 worth resuming. That is the **binary fallback**, and it is why the format
 handles mixed content without being told which is which.
 
+### The marker
+
+Detection is total, not probabilistic. A headerless stream *cannot* begin with
+a marker, because no packer can write those values -- there is no escape clause
+and no exclusion rule anywhere in the encoder. That is what the fixed
+thirteen-bit symbol is bought for.
+
+Every marker's second character is `-`, and classic basE91 cannot produce `-`
+at all, so a `-` in second place also answers "is this base91-jdp or is it
+classic basE91?". Classic basE91 needs no flag to stay out of band.
+
+| marker | compression | error correction |
+|---|---|---|
+| none | none | none |
+| `~-` | none | Reed-Solomon |
+| `}-` | LZ4 | Reed-Solomon |
+| `\|-` | none | check pattern only |
+| `{-` | LZ4 | check pattern only |
+
+### Error correction, and a check that costs nothing
+
+Reed-Solomon over GF(2^13) repairs **two damaged symbols per 4 096-symbol
+codeword for 0.098 %** of the stream. The field is the point: the channel
+damages *characters*, and one pair is exactly one GF(2^13) symbol, so one
+damaged character is one damaged symbol. Byte-level parity would need six
+parity bytes and 2.4 % to say the same thing.
+
+The eighty-eight free pair values do a second job inside the body. A symbol
+that falls in a scattered window of eighty-eight values may be written as one
+of them instead, which carries one bit **without moving a single character** --
+2.3 % to 4.3 % of symbols on the corpus, 793 to 3 460 bits per segment. Those
+bits hold a check pattern derived from each codeword's own contents, which is
+what narrows the hole where Reed-Solomon, overwhelmed, lands on a different
+valid codeword.
+
+### The damage bound
+
+Segments are 256 KiB of payload, divided by `--`, each with its own LZ4
+dictionary. Because no packed symbol can spell `--`, a reader that has lost its
+place finds the next separator and carries on -- so segment boundaries are not
+a chain, and there is no length field anywhere that one damaged symbol could
+take out.
+
+* One to eight flipped bits in a protected stream: **repaired**, exactly, in
+  240 of 240 trials over 3 MiB.
+* Damage that overwhelms a codeword: **one segment**.
+* A separator destroyed outright: **two**, because they merge.
+* Nothing costs a third. Measured over 1 200 trials with bursts of 4 to 4 096
+  characters: worst case 512 KiB of payload, and not one run returned altered
+  bytes without saying a segment was lost.
+
 ## Where it wins, and where it does not
 
 Measured on Base85N's benchmark corpus, unchanged: 6.52 MB of real files.
-Characters per input byte, once the output sits in a JSON string. Full tables,
-method and every sweep: [`bench/results/RESULTS.md`](bench/results/RESULTS.md).
+Characters per input byte, once the output sits in a JSON string. Full tables
+and method: [`bench/results/RESULTS.md`](bench/results/RESULTS.md).
 
-| | Base64 | Ascii85 | basE91 | [Base85N](https://base85n.ghadami.de/) | base91-jdp |
-|---|---|---|---|---|---|
-| text files | 1.333 | 1.262 | 1.252 | **0.965** | 1.001 |
-| binary files | 1.333 | 1.163 | 1.228 | **1.050** | 1.170 |
-| whole corpus | 1.333 | 1.213 | 1.240 | **1.007** | 1.084 |
+| | Base64 | basE91 | [Base85N](https://base85n.ghadami.de/) | Base64 +deflate | Base85N +deflate | **base91-jdp** |
+|---|---|---|---|---|---|---|
+| text files | 1.333 | 1.252 | 0.965 | 0.197 | **0.184** | 0.334 |
+| binary files | 1.333 | 1.228 | 1.050 | 0.534 | **0.501** | 0.676 |
+| whole corpus | 1.333 | 1.240 | 1.007 | 0.363 | **0.340** | 0.503 |
 
-**Against basE91** — the format it is a variant of — the swap costs nothing and
-the container saves **12.5 %**. Same algorithm, same density, one character
-different, and no escaping.
+Three readings, and they say different things.
 
-**Against Base64**: 18.7 % smaller over the corpus, 25.0 % on text.
+**Against the plain binary-to-text codecs it is twice as good.** 0.503 against
+Base85N's 1.007 and Base64's 1.333, because it carries a compressor and they do
+not.
 
-On the text corpus it lands at **1.00081** — passthrough carries real source,
-JSON and prose at essentially one character per byte.
+**Against deflate-then-encode it is 48 % worse.** That is the price of LZ4 over
+deflate, and it is a deliberate one: a specification that demands LZ4 demands a
+few hundred lines, and one that demands deflate demands a library. If you
+already have zlib in the process and size is the only thing you care about,
+deflate then Base85N is smaller. It is also two formats, two failure modes, no
+error correction and no damage bound.
 
-**Against Base85N** it splits, and the split is the honest summary of what this
-format is for:
+**On data that will not compress it is the only column that does not lose:**
 
-| sample | Base85N | base91-jdp |
-|---|---|---|
-| `sql-wasm.wasm` | 1.239 | **1.208** |
-| `DejaVuSans.ttf` | 1.232 | **1.217** |
-| `grace_hopper.jpg` | 1.249 | **1.229** |
-| `minduka_present.png` | 1.250 | **1.229** |
-| `bootstrap.css` | 1.003 | **1.001** |
-| `countries.min.json` | 1.003 | **1.000** |
-| `lodash.js` | 1.004 | **1.001** |
-| `countries.json` | **0.935** | 1.000 |
-| `commonmark-spec.txt` | **0.859** | 1.005 |
-| `requests-2.32.3.tar` | **0.767** | 1.044 |
-| whole corpus | **1.007** | 1.084 |
+| sample | Base64 +deflate | Base85N | base91-jdp |
+|---|---|---|---|
+| `grace_hopper.jpg` | 1.330 | 1.249 | **1.231** |
+| `minduka_present.png` | 1.334 | 1.250 | **1.231** |
 
-base91-jdp wins **every file neither codec can compress** — the WebAssembly
-module, the font, the JPEG, the PNG — by 1.2 % to 2.5 %. Where both formats have
-run out of structure to exploit, the alphabet is all that is left, and 91
-characters beat 85 by about 1.5 %.
+A deflate pipeline *expands* an already-compressed file past plain Base64.
+base91-jdp builds both candidates, compares their exact sizes and keeps the
+shorter, so it never does. That is also why there is no threshold to tune:
 
-It also wins on **short payloads**, because a segment that runs to the end of
-the input needs no closing signal:
+```
+payload    32 B         64 B         128 B and up
+text       headerless   headerless   framed
+JSON       headerless   framed       framed
+random     headerless   headerless   headerless      <- never framed, at any size
+```
+
+Short payloads keep the passthrough encoding, which is why the 37-byte example
+at the top is still readable:
 
 ```
 input     {"user":"ada","id":42,"role":"admin"}          37 bytes
@@ -120,37 +180,23 @@ Base85N   %nU$w{~user~:~ada~^~id~:42^~role~:~admin~}              42
 base91-jdp  --EA{$user$:$ada$,$id$:42,$role$:$admin$}             41
 ```
 
-It loses everywhere Base85N's **Fill** mode has runs to work with: the zero
-padding in a block-aligned tar, the indentation in pretty-printed JSON, the long
-space runs in a specification document. base91-jdp has no run-length construct
-at all, and that is a decision rather than an omission. The whole 7.7 % gap is
-that one construct — but the same files, deflated first, go to 0.332, and there
-base91-jdp is ahead of Base85N by 1.6 %. A mode that wins back a fifth of what a
-call to zlib wins, on exactly the payloads where zlib is available, is not worth
-the format complexity or the expansion bound it would cost. `npm run bench:fill`
-has the numbers; §15 of the specification keeps 6 233 header values reserved in
-case that judgement ever changes.
-
 ### So which should you use?
 
-* Output goes into **XML, HTML or an SVG attribute** → not this. `<`, `>` and
+* Output goes into **XML, HTML or an SVG attribute** -> not this. `<`, `>` and
   `&` are all in this alphabet. Use [Base85N](https://base85n.ghadami.de/),
   whose alphabet contains none of them.
-* **You can compress before encoding** → base91-jdp, on everything, by 1.6 %.
-  See [Compress first](#compress-first--and-how-to-know-when); this is the case
-  the format is built for and the one where the split below stops mattering.
-* Payload is **incompressible binary in JSON** — a key, a hash, a thumbnail, a
-  compressed blob, a media file → base91-jdp, by 1.2 % to 2.5 %.
-* Payload has **long runs of one byte** and must go in **uncompressed** — zero
-  padding, deep indentation → Base85N. Its Fill mode wins by more than the
-  alphabet loses.
-* Payload is **ordinary text with no long runs**, uncompressed — minified JSON,
-  CSS, a log line → base91-jdp, narrowly.
-* Payload is a **short JSON or text field in a JSON document** → base91-jdp, by
-  a character or two.
-* You already use **basE91** and the output lands in JSON → base91-jdp, by
-  12 %, for a one-character change to the alphabet.
-* You can send **raw bytes** → send raw bytes. Any encoding is a loss.
+* **Smallest possible output, zlib already in the process, nothing else
+  matters** -> deflate, then Base85N. 0.340 against this format's 0.503.
+* **One tool, no dependency, and a stream that says what it is** ->
+  base91-jdp. Twice as small as any plain encoding, and the decoder needs
+  nothing but the decoder.
+* **The stream may be damaged and you need to know, or need it repaired** ->
+  base91-jdp with `protect`. One flipped bit is repaired; worse damage costs a
+  bounded piece and is reported. No other option here offers this at 0.1 %.
+* Payload is **incompressible binary in JSON** -- a key, a hash, a thumbnail, a
+  media file -> base91-jdp, by 1.2 % to 8 % against everything else.
+* Payload is a **short JSON or text field in a JSON document** -> base91-jdp,
+  and it stays legible.
 
 ## Install
 
@@ -165,19 +211,61 @@ browsers, Deno and Bun.
 
 | Function | Description |
 |---|---|
-| `encode(bytes: Uint8Array): string` | Encode binary data. |
-| `decode(text: string): Uint8Array` | Decode; whitespace in the input is skipped. |
-| `encodeText(text: string): string` | Encode a string as UTF-8. |
-| `decodeText(text: string): string` | Decode to a string; throws on invalid UTF-8. |
+| `encode(bytes, options?): string` | Encode binary data. |
+| `decode(text, options?): Uint8Array` | Decode; whitespace in the input is skipped. |
+| `decodeDetailed(text)` | Decode and report the mode, the segments, what was repaired and what was lost. |
+| `encodeText(text, options?): string` | Encode a string as UTF-8. |
+| `decodeText(text, options?): string` | Decode to a string; throws on invalid UTF-8. |
 | `ALPHABET: string` | The 91 characters, in value order. |
-| `R_CHARS: number[]` | The eight substituted byte values, in mask-bit order. |
-| `PROFILES: string[]` | The donor profiles. |
+| `MODES` | The mode markers and what each one means. |
 | `CONSTANTS` | The frozen constants of the specification. |
 | `makeCodec(config)` | The parameterised core, for experiments. |
 
+### Options
+
+```js
+encode(bytes, {
+  compress: 'auto',   // 'auto' | 'never' | 'always'
+  protect: 'auto',    // 'auto' | 'check' | true | false
+});
+```
+
+`compress: 'auto'` builds the LZ4 candidate, works out its exact size, and
+takes it only if it is shorter than the alternative. There is no threshold to
+tune and no size below which it gives up guessing.
+
+`protect` answers two questions that are easy to run together and must not be
+-- whether error correction is wanted, and whether a frame is wanted at all:
+
+| value | error correction | check pattern | frame |
+|---|---|---|---|
+| `'auto'` | once it is close to free | when framed | if it is smaller |
+| `true` | yes | yes | always |
+| `'check'` | no | yes | always |
+| `false` | no | when framed | if it is smaller |
+
+`'check'` is the useful one for data that will not compress: damage is
+reported rather than repaired, and it costs no characters at all.
+
+### Decoding a stream that may be damaged
+
+```js
+import { decode, decodeDetailed } from 'base91-jdp';
+
+decode(text);                      // throws DAMAGED_SEGMENT if anything was lost
+decode(text, { partial: true });   // returns the segments that survived
+
+const seen = decodeDetailed(text);
+seen.mode;      // 'lz4', 'stored', 'lz4Checked', 'storedChecked', or undefined
+seen.repaired;  // symbols error correction put back
+seen.damaged;   // the segments it could not, with a reason each
+```
+
 Everything throws `Base91JdpError` on malformed input, with a `code` from
-`ERR`: `INVALID_CHARACTER`, `UNEXPECTED_EOS`, `UNDEFINED_SIGNAL`,
-`INVALID_FLUSH`, `INVALID_FINAL_BLOCK`.
+`ERR`. There is one error type whichever layer refused: `INVALID_CHARACTER`,
+`UNEXPECTED_EOS`, `UNDEFINED_SIGNAL`, `INVALID_FLUSH`, `INVALID_FINAL_BLOCK`,
+`RESERVED_PAIR`, `UNKNOWN_MODE`, `EXTENDED_HEADER`, `MALFORMED_FRAME`,
+`MALFORMED_PAIRS`, `DAMAGED_SEGMENT`.
 
 ```js
 import { encodeText, decodeText } from 'base91-jdp';
@@ -190,145 +278,98 @@ decodeText(encoded);                 // 'Grüße aus München'
 ## Command line
 
 ```bash
-base91jdp photo.jpg > photo.b91          # encode
-base91jdp -d photo.b91 > photo.jpg       # decode
-gzip -9 < dump.bin | base91jdp -w 100    # wrap at 100 characters
+base91jdp photo.jpg > photo.b91              # encode; LZ4 if it helps
+base91jdp -d photo.b91 > photo.jpg           # decode
+base91jdp --protect yes backup.tar > b.b91   # add error correction
+base91jdp -d --partial --verbose b.b91       # salvage what survived
+base91jdp -w 100 dump.bin                    # wrap at 100 characters
 ```
 
 Input is treated as raw bytes; output carries no trailing newline. Whitespace is
-skipped on decode, so wrapped output decodes without preprocessing.
+skipped on decode, so wrapped output decodes without preprocessing. A damaged
+stream is a non-zero exit unless `--partial` is given, because returning short
+output silently is the one thing a decoder must not do.
 
-## Compress first — and how to know when
+## Compressing outside the format
 
-base91-jdp is a transcoder, not a compressor. It has no run-length or dictionary
-construct on purpose: the answer to a payload with structure in it is a real
-compressor, not a mode. Deflate output is incompressible, so it encodes at a
-flat 1.2308 — which is exactly the case base91-jdp is best at.
+`encode` already tries LZ4 and keeps it only when it is smaller, so there is
+nothing to do for the ordinary case. Two situations are worth knowing about.
 
-**And that is where it wins outright.** Deflate the corpus first and the
-comparison stops splitting, because once the payload is incompressible the
-alphabet is the only thing left:
-
-| whole corpus, deflate -9 then encoded | characters per input byte |
-|---|---|
-| Base85N | 0.33741 |
-| **base91-jdp** | **0.33194** — 1.6 % smaller |
-
-The same 1.5 % that shows up on a JPEG shows up on everything, because
-compression has turned everything into a JPEG as far as an encoder is concerned.
-A run-length mode would not get close: bounding one generously puts the corpus
-at 0.965 where deflate reaches 0.332, so the construct base91-jdp declined to
-build is worth about a fifth of what calling zlib is worth.
-
-That leaves the caller one decision, and it is not obvious, because passthrough
-already carries text at 1.0. **Deflating pays exactly when deflate compresses to
-below 81 %** — `1 / 1.2308` — of what passthrough would have charged.
-
-Measured over 6 174 payloads from 64 B to 256 KiB (`npm run bench:gzip`):
-
-| payload | deflate wins |
-|---|---|
-| deflate ratio < 0.8 | 100 %, at every size from 64 B up |
-| deflate ratio 0.8–1.0 | 16 % at 64 B, 58 % at 128 B, 100 % from 512 B |
-| deflate expands it | never |
-
-So the decision is essentially *does deflate compress this at all*, with a
-size correction that only bites below 256 bytes.
-
-**Below ~4 KB, do not predict — try both.** Deflating 4 KB takes 0.046 ms; the
-two encodes cost less than the branch is worth arguing about.
-
-**Above that, 512 bytes of prefix are enough.** Deflate the first 512 bytes,
-encode the first 512 bytes, and compare the two rates:
+**You need it smaller and you have zlib.** Deflate compresses better than LZ4 by
+a wide margin. Deflate first and the format will notice it cannot improve on
+what you handed it:
 
 ```js
 import { deflateRawSync } from 'node:zlib';
 import { encode } from 'base91-jdp';
 
-const PROBE = 512;
-const BLOCK = 16 / 13;          // what block mode charges per byte
-
-function encodeSmart(bytes) {
-  const deflate = (b) => deflateRawSync(b, { level: 9 });
-  if (bytes.length <= 4096) {                       // cheap enough to try both
-    const a = encode(bytes);
-    const b = encode(deflate(bytes));
-    return b.length < a.length ? { deflated: true, text: b } : { deflated: false, text: a };
-  }
-  const probe = bytes.subarray(0, PROBE);
-  const jdpRate = encode(probe).length / PROBE;     // ~1.0 text, ~1.23 binary
-  const gzRate = deflate(probe).length / PROBE;
-  return BLOCK * gzRate < jdpRate
-    ? { deflated: true, text: encode(deflate(bytes)) }
-    : { deflated: false, text: encode(bytes) };
-}
+encode(deflateRawSync(payload, { level: 6 }));   // 0.332 on the corpus
+encode(payload);                                 // 0.503
 ```
 
-How the prefix size pays off, over payloads longer than the prefix:
+The cost is that the reader now needs zlib too, and a stream that no longer
+says what it is.
 
-| bytes inspected | decisions correct | bytes lost against a perfect oracle |
-|---|---|---|
-| 128 | 89.2 % | 21.3 % |
-| 256 | 99.4 % | 1.9 % |
-| **512** | **99.8 %** | **0.002 %** |
-| 4096 | 99.2 % | 0.002 % |
-
-512 is where the curve stops moving. The probe costs **0.038 ms** against
-**74.6 ms** to deflate a 1.4 MB payload outright — two thousand times cheaper
-than finding out the hard way.
-
-The residual 0.002 % is not a rounding artefact of the rule; it is what the
-remaining mistakes are worth. They are all near-ties: where deflate neither
-compresses nor expands, the two paths land within 0.2 % of each other (median),
-so picking the wrong one costs almost nothing. The decisions that matter are the
-easy ones.
-
-Note that the stream does not record which path you took — there is no
-"deflated" bit in the format. Carry it yourself, in a sibling JSON field or a
-one-character prefix of your own.
+**Your data is already compressed.** A JPEG, a zip, a video, a key: hand it
+over as it is. LZ4 will be tried, will not help, and the headerless encoding
+wins on size -- 1.231 characters per byte, which is better than anything else
+here and better than deflating it first, which would expand it.
 
 ## Safety properties
 
 * **Nothing it emits needs escaping in JSON.** Not a design goal met by
-  testing — a property of the alphabet, which contains no `"`, no `\` and no
+  testing -- a property of the alphabet, which contains no `"`, no `\` and no
   character below `0x20`.
-* **A decoder can never write more than it reads.** Passthrough is exactly 1:1
-  and a block pair yields at most two bytes, so there is no decompression bomb
-  and no expansion bound to get wrong. Formats with a run-length construct need
-  one; this one does not have the construct.
-* **No length field is carried**, so no length is attacker-controlled.
-* **Malformed input throws**, and never reads outside its buffer.
+* **A headerless stream cannot expand.** Passthrough is exactly 1:1 and a
+  symbol yields at most two bytes.
+* **A framed stream can**, because it carries a compressor -- a megabyte of
+  zeros is under 6 000 characters, and reading it back produces a megabyte. A
+  decoder bounds this by the segment size, which is fixed, times a segment
+  count the input bounds.
+* **The check pattern is not a MAC.** It detects accident. Anyone who can
+  rewrite the stream can rewrite the pattern with it.
+* **Malformed input throws**, with a code, and never reads outside its buffer.
+* **A damaged segment is never returned as though it were sound.** Either the
+  decode fails or the loss is reported.
 
 ## Specification
 
-[`spec/base91-jdp-v0.2.0.md`](spec/base91-jdp-v0.2.0.md) defines the format
-completely: alphabet, the threshold change that frees `--`, the passthrough
-signal and its header, the prefix scan, canonicity, error handling, and the
-measurements behind every constant.
+[`spec/base91-jdp-v0.3.0.md`](spec/base91-jdp-v0.3.0.md) defines the format
+completely: the alphabet, the fixed thirteen-bit symbol and the eighty-nine
+values it frees, the marker and the modes, passthrough and its header, the
+framed body and its damage bound, the side channel, error correction, the LZ4
+block format, canonicity, error handling, and the measurements behind every
+constant.
 
-Status is **draft**. The format is complete and implemented, but it has not been
-in the field, and §15 reserves space for a run-length mode that a later version
-is expected to add.
+Status is **draft**. The format is complete, implemented and measured, but it
+has not been in the field. Eighty-three markers are unassigned and one is
+reserved to say "a longer header follows", so there is room without anything
+being spent on it.
 
 ## Tests and benchmarks
 
 ```bash
-npm test                    # round trip, canonicity, adversarial decode
+npm test                    # 76 tests: round trip, adversarial decode, damage bound
 python3 bench/corpus.py     # fetch the benchmark corpus (pinned, verified)
 npm run bench               # the size tables
+npm run bench:pipeline      # modes, side channel, throughput per layer
 npm run bench:sweep         # the parameter sweeps
-npm run bench:signal        # the signal character, and why segments end
-npm run bench:fill          # what a run-length mode would be worth
+npm run bench:rs            # the Reed-Solomon study
 ```
 
-The Base85N column of the benchmark runs the upstream Go implementation
-(v0.5.1) and needs Go on the path; without it that column is left out rather
-than filled in from documentation.
+The Base85N columns of the benchmark run the upstream Go implementation
+(v0.5.1) and need Go on the path; without it those columns are left out rather
+than filled in from documentation. The LZ4 fixtures in `test/lz4-fixtures.js`
+were produced by upstream liblz4 and check that `src/lz4.js` speaks the block
+format rather than a private dialect of it.
 
 ## Credit
 
-* **basE91** — Joachim Henke, 2005. The block coder is his, unchanged but for
-  one alphabet character and one threshold.
+* **basE91** -- Joachim Henke, 2005. The alphabet and the pair coding are his;
+  the fixed thirteen-bit symbol is the one departure, and it is what the rest
+  of the format is built on.
+* **LZ4** -- Yann Collet. `src/lz4.js` implements the block format from its
+  specification, with no code taken from the reference implementation.
 * **[Base85N](https://base85n.ghadami.de/)** — the Dynamic Passthrough idea, the
   R-Set and donor-profile mechanism, the benchmark corpus, and the habit of
   measuring rather than asserting all come from it.

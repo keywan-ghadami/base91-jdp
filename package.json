@@ -1,7 +1,7 @@
 {
   "name": "base91-jdp",
-  "version": "0.2.0",
-  "description": "basE91 on a JSON-safe alphabet, with a dynamic passthrough mode that carries text at one character per byte",
+  "version": "0.3.0",
+  "description": "basE91 on a JSON-safe alphabet, with passthrough, LZ4 and error correction",
   "type": "module",
   "main": "./src/index.js",
   "exports": {
@@ -22,6 +22,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "bench": "node bench/bench.js",
+    "bench:pipeline": "node bench/pipeline.js",
     "bench:sweep": "node bench/sweep.js",
     "bench:signal": "node bench/signalchar.js",
     "bench:fill": "node bench/fillbound.js",
@@ -36,7 +37,11 @@
     "encoding",
     "binary-to-text",
     "json",
-    "codec"
+    "codec",
+    "lz4",
+    "compression",
+    "reed-solomon",
+    "error-correction"
   ],
   "author": "Keywan Ghadami",
   "license": "MPL-2.0",
