@@ -54,7 +54,10 @@ test('a header in the future signal space is rejected', () => {
 });
 
 test('input that ends inside a header or a pending-bit field', () => {
-  throwsWith(ERR.UNEXPECTED_EOS, () => decode(SIGNAL));
+  // "--" on its own is not a truncated signal: two characters at the end of a
+  // stream are its final group, which owes eight bits here and cannot hold
+  // 8280. The decoder has no way to read it as anything else, and says so.
+  throwsWith(ERR.INVALID_FINAL_BLOCK, () => decode(SIGNAL));
   throwsWith(ERR.UNEXPECTED_EOS, () => decode(SIGNAL + 'A'));
   // hi = 1 with no pending bits present
   throwsWith(ERR.UNEXPECTED_EOS, () => decode(SIGNAL + pair(1)));

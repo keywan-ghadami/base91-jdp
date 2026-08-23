@@ -15,8 +15,8 @@
 // basE91 (Joachim Henke, 2005) with '"' replaced by '-'.  The alphabet then
 // contains none of JSON's string-syntax characters (`"`, `\`) and none of its
 // control characters, so encoded output drops into a JSON string verbatim.
-// '-' lands on value 90, the last, which is what makes the pair "--" the one
-// value the block coder can never produce (see BLOCK_THRESHOLD).
+// '-' lands on value 90, the last, which puts the pair "--" at 8280 -- above
+// everything thirteen bits can spell, and so a signal that needs no escaping.
 export const ALPHABET =
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' +
   '!#$%&()*+,./:;<=>?@[]^_`{|}~-';
@@ -27,6 +27,15 @@ export const BASE91_ALPHABET =
 
 export const SIGNAL_VALUE = 8280; // 90 + 90 * 91, the pair "--"
 export const HYPHEN = 0x2d;
+
+// A pair holds 8281 values and the block coder writes 8192 of them: thirteen
+// bits, always. That is what leaves 8192..8280 free -- the separator above and
+// the mode markers of src/marker.js -- and what makes one pair one GF(2^13)
+// symbol, which is the whole basis of the error correction. A pair value in
+// 8192..8279 inside a stream is therefore not a symbol at all; it is a stream
+// that has been damaged or was never ours.
+export const SYMBOL_BITS = 13;
+export const SYMBOL_MAX = 1 << SYMBOL_BITS;
 
 /**
  * An alphabet with `ch` moved to value 90, so that the reserved pair becomes
@@ -41,10 +50,6 @@ export function alphabetWithSignal(ch) {
   return a.join('');
 }
 
-// basE91 splits a 14-bit block off the accumulator when its low 13 bits are
-// at most 88.  Lowering that bound by one removes exactly one pair value from
-// the block coder's range -- 8280, "--" -- and costs one of 8281 states.
-export const BLOCK_THRESHOLD = 87;
 
 // The R-Set: the eight bytes a passthrough segment substitutes.  Seven of them
 // real text is full of and the alphabet does not contain; the eighth is '-'
@@ -63,6 +68,9 @@ export const ERR = {
   UNDEFINED_SIGNAL: 'UNDEFINED_SIGNAL',
   INVALID_FLUSH: 'INVALID_FLUSH',
   INVALID_FINAL_BLOCK: 'INVALID_FINAL_BLOCK',
+  // A pair in 8192..8279: no block coder can write one, so the stream is
+  // damaged, or it is a framed stream being read as a headerless one.
+  RESERVED_PAIR: 'RESERVED_PAIR',
 };
 
 export class Base91JdpError extends Error {
@@ -293,11 +301,25 @@ export function makeCodec(cfg = {}) {
       }
     };
 
+    // The block coder's accumulator, most significant bit first: bytes go in
+    // at the bottom, thirteen-bit symbols come off the top. `n` is how many
+    // bits are held, never more than twelve between symbols.
     let b = 0;
     let n = 0;
     let pos = 0;
     let binaryRun = Infinity; // no exit signal has been paid at the start
     let inDp = false;
+
+    // The bits owed on bytes already read. One character carries up to six of
+    // them, two carry up to twelve, which is the most there can ever be.
+    const flushPending = () => {
+      if (n === 0) return;
+      const w = b & ((1 << n) - 1);
+      out[o++] = CHR[w % 91];
+      if (n > 6) out[o++] = CHR[(w / 91) | 0];
+      b = 0;
+      n = 0;
+    };
 
     while (pos < end) {
       const scan =
@@ -313,18 +335,16 @@ export function makeCodec(cfg = {}) {
         // exit block mode: signal, header, then the pending bits
         out[o++] = SIG;
         out[o++] = SIG;
+        // The decoder can work out the pending count modulo eight from the
+        // symbols it has read; the header's low bit says which of the two
+        // candidates below thirteen it was.
         const hi = n >= 8 ? 1 : 0;
         let h = packHeader(hi, scan.mask, scan.profile);
         for (let t = 0; t < headerChars; t++) {
           out[o++] = CHR[h % 91];
           h = (h / 91) | 0;
         }
-        if (n > 0) {
-          out[o++] = CHR[b % 91];
-          if (n > 6) out[o++] = CHR[(b / 91) | 0];
-        }
-        b = 0;
-        n = 0;
+        flushPending();
 
         const donor = donorsFor(scan.mask, scan.profile);
         for (let i = 0; i < scan.L; i++) {
@@ -343,18 +363,12 @@ export function makeCodec(cfg = {}) {
       } else {
         // block mode, one byte at a time (spec section 6.3)
         if (stats) stats.blockBytes++;
-        b |= bytes[pos++] << n;
+        b = (b << 8) | bytes[pos++];
         n += 8;
-        if (n > 13) {
-          let v = b & 8191;
-          if (v > BLOCK_THRESHOLD) {
-            b >>= 13;
-            n -= 13;
-          } else {
-            v = b & 16383;
-            b >>= 14;
-            n -= 14;
-          }
+        if (n >= SYMBOL_BITS) {
+          n -= SYMBOL_BITS;
+          const v = (b >>> n) & (SYMBOL_MAX - 1);
+          b &= (1 << n) - 1;
           need(2);
           out[o++] = CHR[v % 91];
           out[o++] = CHR[(v / 91) | 0];
@@ -363,10 +377,9 @@ export function makeCodec(cfg = {}) {
       }
     }
 
-    if (!inDp && n > 0) {
+    if (!inDp) {
       need(2);
-      out[o++] = CHR[b % 91];
-      if (n > 7 || b > 90) out[o++] = CHR[(b / 91) | 0];
+      flushPending();
     }
     return latin1(out.subarray(0, o));
   }
@@ -376,8 +389,10 @@ export function makeCodec(cfg = {}) {
   // ---------------------------------------------------------------------
 
   function decode(text) {
-    const src =
-      typeof text === 'string' ? asciiBytes(text) : new Uint8Array(text);
+    // Whitespace is never significant -- the alphabet contains none of it --
+    // so it comes out first. What is left is counted, and the count is what
+    // tells the final group how wide it is.
+    const src = significant(text);
     const len = src.length;
     let out = new Uint8Array(len + 16);
     let o = 0;
@@ -390,6 +405,8 @@ export function makeCodec(cfg = {}) {
       out[o++] = byte;
     };
 
+    // The mirror of the encoder's accumulator: symbols go in at the bottom,
+    // bytes come off the top, and `n` is what is left over, always under eight.
     let b = 0;
     let n = 0;
     let i = 0;
@@ -397,21 +414,18 @@ export function makeCodec(cfg = {}) {
     let donor = null;
     let fromDonor = null;
 
-    // whitespace is never significant: the alphabet contains none of it
-    const next = () => {
-      while (i < len) {
-        const c = src[i++];
-        if (c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d) continue;
-        return c;
+    const emitBits = (width, value) => {
+      b = (b << width) | value;
+      n += width;
+      while (n >= 8) {
+        n -= 8;
+        emit((b >>> n) & 0xff);
       }
-      return -1;
+      b &= (1 << n) - 1;
     };
-    const peek = () => {
-      const save = i;
-      const c = next();
-      i = save;
-      return c;
-    };
+
+    const next = () => (i < len ? src[i++] : -1);
+    const peek = () => (i < len ? src[i] : -1);
     const digit = (c) => {
       if (c < 0) fail(ERR.UNEXPECTED_EOS, 'input ends inside a group');
       const v = VAL[c];
@@ -442,31 +456,42 @@ export function makeCodec(cfg = {}) {
         continue;
       }
 
-      const c0 = next();
-      if (c0 < 0) break;
-      const d0 = digit(c0);
-      const c1 = next();
-      if (c1 < 0) {
-        // trailing single character: basE91's final partial group. It carries
-        // the bits still owed on the last byte, so there have to be some, and
-        // it may not carry more than are owed.
-        if (n === 0)
-          fail(ERR.INVALID_FINAL_BLOCK, 'a trailing character with no byte to finish');
-        if (d0 >= 1 << (8 - n))
-          fail(ERR.INVALID_FINAL_BLOCK, 'a trailing character with bits to spare');
-        emit((b | (d0 << n)) & 0xff);
+      const left = len - i;
+      // What the writer still owed on the byte in hand, modulo eight. It held
+      // either that many bits or eight more -- never anything else, because a
+      // thirteenth bit would have become a symbol.
+      const owed = (8 - n) % 8;
+
+      if (left === 0) {
+        if (n !== 0) fail(ERR.INVALID_FINAL_BLOCK, 'the stream ends inside a byte');
         break;
       }
-      const v = d0 + digit(c1) * 91;
+
+      // The final group. One character carries up to six bits and two carry
+      // seven to twelve, so the character count picks between the two
+      // candidates -- except after three held bits, where the only candidate
+      // needs one character and two characters can only be a whole symbol.
+      if (left === 1 || (left === 2 && n !== 3)) {
+        const q = left === 1 ? owed : owed >= 7 ? owed : owed + 8;
+        const wide = q > 6;
+        if (q === 0 || q > 12 || (wide ? 2 : 1) !== left) {
+          fail(ERR.INVALID_FINAL_BLOCK, `${left} trailing character(s) cannot owe ${q} bits`);
+        }
+        let w = digit(next());
+        if (wide) w += digit(next()) * 91;
+        if (w >= 1 << q)
+          fail(ERR.INVALID_FINAL_BLOCK, 'the final group carries more bits than are owed');
+        emitBits(q, w);
+        break;
+      }
+
+      const v = digit(next()) + digit(next()) * 91;
 
       if (v !== SIGNAL_VALUE) {
-        b |= v << n;
-        n += (v & 8191) > BLOCK_THRESHOLD ? 13 : 14;
-        while (n > 7) {
-          emit(b & 0xff);
-          b >>>= 8;
-          n -= 8;
+        if (v >= SYMBOL_MAX) {
+          fail(ERR.RESERVED_PAIR, `the pair value ${v} is reserved and cannot be a symbol`);
         }
+        emitBits(SYMBOL_BITS, v);
         continue;
       }
 
@@ -477,28 +502,23 @@ export function makeCodec(cfg = {}) {
         fail(ERR.UNDEFINED_SIGNAL, `header value ${h} is not defined`);
       const { hi, mask, profile } = unpackHeader(h);
 
-      // The encoder's pending bit count is congruent to -n mod 8; the header's
-      // low bit says which of the two candidates in 0..13 it was.
-      const nEnc = ((8 - n) % 8) + 8 * hi;
-      if (nEnc > 13)
+      // The writer's pending bit count is congruent to -n mod 8; the header's
+      // low bit says which of the two candidates below thirteen it was.
+      const nEnc = owed + 8 * hi;
+      if (nEnc > 12)
         fail(ERR.INVALID_FLUSH, `pending bit count ${nEnc} is out of range`);
       if (nEnc > 0) {
         let w = digit(next());
         if (nEnc > 6) w += digit(next()) * 91;
         if (w >= 1 << nEnc)
           fail(ERR.INVALID_FLUSH, 'pending bits carry more than they may');
-        // n + nEnc is a multiple of 8 by the construction of nEnc, so this
+        // n + nEnc is a multiple of eight by the construction of nEnc, so this
         // always empties the accumulator exactly.
-        b |= w << n;
-        n += nEnc;
-        while (n > 7) {
-          emit(b & 0xff);
-          b >>>= 8;
-          n -= 8;
-        }
+        emitBits(nEnc, w);
       }
-      b = 0;
-      n = 0;
+      // n is zero here, and there is no check for it: n + nEnc is a multiple
+      // of eight by construction, so a flush that did not close a byte is not
+      // a stream this decoder can be handed.
 
       donor = donorsFor(mask, profile);
       fromDonor = new Int8Array(256).fill(-1);
@@ -553,13 +573,22 @@ function latin1(bytes) {
   return s;
 }
 
-function asciiBytes(text) {
-  const out = new Uint8Array(text.length);
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
+/**
+ * The characters of an encoded stream, with whitespace dropped. Wrapped output
+ * decodes as it stands, and what is left is a count the final group can be
+ * measured against.
+ */
+function significant(text) {
+  const isString = typeof text === 'string';
+  const n = text.length;
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (let i = 0; i < n; i++) {
+    const c = isString ? text.charCodeAt(i) : text[i];
+    if (c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d) continue;
     if (c > 0xff)
       fail(ERR.INVALID_CHARACTER, `U+${c.toString(16)} is not in the alphabet`);
-    out[i] = c;
+    out[o++] = c;
   }
-  return out;
+  return out.subarray(0, o);
 }
