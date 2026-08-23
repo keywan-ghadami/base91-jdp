@@ -578,7 +578,7 @@ function latin1(bytes) {
  * decodes as it stands, and what is left is a count the final group can be
  * measured against.
  */
-function significant(text) {
+export function significant(text) {
   const isString = typeof text === 'string';
   const n = text.length;
   const out = new Uint8Array(n);

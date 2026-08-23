@@ -135,12 +135,14 @@ export function charsFromSymbols(symbols) {
   return latin1(out);
 }
 
-/** The inverse, keeping every value the characters actually spell, 0..8280. */
+/** The inverse, keeping every value the characters actually spell, 0..8280.
+ *  Takes a string or the character codes of one. */
 export function pairsFromChars(text) {
   if (text.length % 2 !== 0) throw new PackError('an odd number of characters');
+  const at = typeof text === 'string' ? (i) => text.charCodeAt(i) : (i) => text[i];
   const pairs = new Uint16Array(text.length / 2);
   for (let i = 0; i < pairs.length; i++) {
-    pairs[i] = digit(text.charCodeAt(2 * i)) + digit(text.charCodeAt(2 * i + 1)) * 91;
+    pairs[i] = digit(at(2 * i)) + digit(at(2 * i + 1)) * 91;
   }
   return pairs;
 }
