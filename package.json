@@ -26,6 +26,7 @@
     "bench:signal": "node bench/signalchar.js",
     "bench:fill": "node bench/fillbound.js",
     "bench:gzip": "node bench/gzipdecision.js",
+    "bench:rs": "node --max-old-space-size=4096 bench/rsstudy.js",
     "corpus": "python3 bench/corpus.py"
   },
   "keywords": [
