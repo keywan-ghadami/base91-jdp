@@ -187,6 +187,33 @@ It reverses completely on a JPEG — 1.2308 at 2 493 MB/s uncompressed against
 corpus it produces byte-identical output to `encode_auto`'s build-both on all
 thirteen files at every level tried, at three to thirteen times the throughput.
 
+**Does zstd make the classes unnecessary?** No, and the short group says why.
+Over its 55 samples a compressed segment costs 1.4040 characters per byte at
+level 3 — *worse than Base64* — against 0.9252 for the plain encoding, and it
+is smaller on two of the fifty-five. A twelve-byte name costs 2.417 through a
+frame. An LZ77 window that opens on 150 bytes is empty, and no level fixes it.
+
+Taking each family away:
+
+| classes enabled | short corpus | core corpus |
+|---|---|---|
+| all | **0.9252** | **0.9783** |
+| no runs | 0.9681 | 1.1372 |
+| no packed bases | 1.0491 | 0.9784 |
+| no passthrough | 0.9597 | 1.0620 |
+| block coder alone | 1.2394 | 1.2308 |
+
+The runs carry the core corpus, the packed bases carry the short one and do
+nothing at all for the core, passthrough matters to both. Three mechanisms for
+three shapes of input — and on a long compressible payload they cost nothing
+anyway, because the decision of section 11.5 skips the scan before any of them
+is reached.
+
+What the ablation *did* remove is three classes: `DEC`, `ALPHA_U` and `ALNUM`,
+whose alphabets are contained in `HEXL`, `B32` and `B64` at the same width. A
+subset at equal width can never produce a shorter segment, and dropping all
+three left both corpora unchanged to every digit reported.
+
 ## A feature flag for more speed
 
 `--features simd` needs **nightly**, because `std::simd` is unstable. It is the

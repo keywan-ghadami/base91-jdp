@@ -91,6 +91,15 @@ pub mod tuning {
     pub const F_PACKED: usize = 2;
     pub const F_PT: usize = 4;
 
+    /// One bit per packed class, in class order from `DEC`. For the ablation
+    /// benchmark: which of the thirteen are worth their table.
+    pub static PACKED_MASK: AtomicUsize = AtomicUsize::new(0x3FF);
+
+    #[inline]
+    pub fn packed_mask() -> u16 {
+        PACKED_MASK.load(Relaxed) as u16
+    }
+
     /// Whether the encoder takes the per-window block-mode decision at all.
     /// On by default; the benchmark turns it off to price it.
     pub static DETECT: AtomicUsize = AtomicUsize::new(1);
@@ -112,6 +121,7 @@ pub mod tuning {
         NONZERO_RUN.store(super::MIN_NONZERO_RUN_IN_SEGMENT, Relaxed);
         FAMILIES.store(0b111, Relaxed);
         DETECT.store(1, Relaxed);
+        PACKED_MASK.store(0x3FF, Relaxed);
     }
 }
 pub const MAX_SEGMENT_BYTES: usize = 65_536;
@@ -140,13 +150,13 @@ pub const NUM_PROFILES: usize = PROFILES.len();
 pub const CLASS_PT: u16 = 0;
 pub const CLASS_PT0: u16 = 1;
 pub const CLASS_PACKED_FIRST: u16 = 7;
-pub const CLASS_PACKED_LAST: u16 = 19;
-pub const CLASS_ZSTD: u16 = 20;
-pub const CLASS_ZRUN: u16 = 21;
-pub const CLASS_RUN: u16 = 22;
-pub const CLASS_ZMIX_FIRST: u16 = 23;
-pub const CLASS_ZMIX_LAST: u16 = 30;
-pub const CLASS_MAX_DEFINED: u16 = 30;
+pub const CLASS_PACKED_LAST: u16 = 16;
+pub const CLASS_ZSTD: u16 = 17;
+pub const CLASS_ZRUN: u16 = 18;
+pub const CLASS_RUN: u16 = 19;
+pub const CLASS_ZMIX_FIRST: u16 = 20;
+pub const CLASS_ZMIX_LAST: u16 = 27;
+pub const CLASS_MAX_DEFINED: u16 = 27;
 
 /// The passthrough shorthands of classes 1..=6: the mask each one implies,
 /// all with profile 0. Index is `class - 1`.
@@ -166,28 +176,31 @@ pub struct Packed {
     pub chars: &'static [u8],
 }
 
-/// Classes 7..=19, in class order. Specification section 7.4.
-pub static PACKED: [Packed; 13] = [
-    Packed { name: "DEC", w: 4, chars: b"0123456789" },
+/// Classes 7..=16, in class order. Specification section 7.4.
+///
+/// Three classes that earlier drafts had are gone: `DEC`, whose alphabet is
+/// contained in `HEXL` at the same width; `ALPHA_U`, contained in `B32`; and
+/// `ALNUM`, contained in `B64`. A class whose alphabet is a subset of another
+/// of the same width can never produce a shorter segment, and removing all
+/// three changed the ratio of neither corpus in the fifth decimal.
+pub static PACKED: [Packed; 10] = [
     Packed { name: "HEXL", w: 4, chars: b"0123456789abcdef" },
     Packed { name: "HEXU", w: 4, chars: b"0123456789ABCDEF" },
     Packed { name: "HEXL_D", w: 5, chars: b"0123456789abcdef-" },
     Packed { name: "HEXU_D", w: 5, chars: b"0123456789ABCDEF-" },
     Packed { name: "ALPHA_L", w: 5, chars: b"abcdefghijklmnopqrstuvwxyz" },
-    Packed { name: "ALPHA_U", w: 5, chars: b"ABCDEFGHIJKLMNOPQRSTUVWXYZ" },
     Packed { name: "B32", w: 5, chars: b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567" },
     Packed { name: "B32H", w: 5, chars: b"0123456789ABCDEFGHIJKLMNOPQRSTUV" },
     Packed { name: "CROCK", w: 5, chars: b"0123456789ABCDEFGHJKMNPQRSTVWXYZ" },
     Packed { name: "B64", w: 6, chars: b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/" },
     Packed { name: "B64U", w: 6, chars: b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" },
-    Packed { name: "ALNUM", w: 6, chars: b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" },
 ];
 
 /// Per packed class, byte -> index, or 0xFF for a byte outside its alphabet.
-pub static PACKED_INDEX: [[u8; 256]; 13] = {
-    let mut all = [[0xFFu8; 256]; 13];
+pub static PACKED_INDEX: [[u8; 256]; 10] = {
+    let mut all = [[0xFFu8; 256]; 10];
     let mut c = 0;
-    while c < 13 {
+    while c < 10 {
         let chars = PACKED[c].chars;
         let mut i = 0;
         while i < chars.len() {
@@ -207,7 +220,7 @@ pub static PACKED_MEMBERSHIP: [u16; 256] = {
     let mut b = 0;
     while b < 256 {
         let mut c = 0;
-        while c < 13 {
+        while c < 10 {
             if PACKED_INDEX[c][b] != 0xFF {
                 t[b] |= 1 << c;
             }

@@ -379,14 +379,14 @@ fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
 
     // --- packed bases ------------------------------------------------------
     let mut live = if families & tuning::F_PACKED != 0 {
-        PACKED_MEMBERSHIP[data[at] as usize]
+        PACKED_MEMBERSHIP[data[at] as usize] & tuning::packed_mask()
     } else {
         0
     };
     if live != 0 {
         // One pass over the input, narrowing the set of classes still alive,
         // records where each class had to stop.
-        let mut end = [at; 13];
+        let mut end = [at; 10];
         let mut j = at;
         let mut run = 1usize;
         let limit = data.len().min(at + MAX_SEGMENT_BYTES);
@@ -398,7 +398,7 @@ fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
                     break;
                 }
             }
-            let m = PACKED_MEMBERSHIP[data[j] as usize];
+            let m = PACKED_MEMBERSHIP[data[j] as usize] & tuning::packed_mask();
             let dead = live & !m;
             let mut d = dead;
             while d != 0 {
@@ -415,7 +415,7 @@ fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
             end[c] = j;
             d &= d - 1;
         }
-        for c in 0..13 {
+        for c in 0..10 {
             let len = end[c] - at;
             if len < 2 {
                 continue;

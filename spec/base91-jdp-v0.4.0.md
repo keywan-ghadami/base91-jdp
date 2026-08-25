@@ -9,10 +9,10 @@
 | Supersedes | 0.3.0 |
 
 > **Draft.** The wire format is complete and there is a prototype encoder and
-> decoder for all of it, class 20 included, in `rust/`. Section 17 is measured
+> decoder for all of it, the compressed class included, in `rust/`. Section 17 is measured
 > against that prototype except where it says otherwise, and Section 17.3 and
 > the run break of Section 11.1 are both things the prototype found and the
-> arithmetic had missed. Thirteen of the forty-four segment classes are
+> arithmetic had missed. Sixteen of the forty-four segment classes are
 > unassigned, and a further forty-five are reachable through the escape, so the
 > format has room without spending any of it today.
 
@@ -363,24 +363,27 @@ Length zero is malformed.
 | 4 | `PT_SQ` | passthrough | — | `mask = {SP, "}` |
 | 5 | `PT_SQL` | passthrough | — | `mask = {SP, ", LF}` |
 | 6 | `PT_Z` | passthrough | — | `mask = {NUL}` |
-| 7 | `DEC` | packed | 4 | `0123456789` |
-| 8 | `HEXL` | packed | 4 | `0123456789abcdef` |
-| 9 | `HEXU` | packed | 4 | `0123456789ABCDEF` |
-| 10 | `HEXL_D` | packed | 5 | `HEXL` followed by `-` |
-| 11 | `HEXU_D` | packed | 5 | `HEXU` followed by `-` |
-| 12 | `ALPHA_L` | packed | 5 | `a` … `z` |
-| 13 | `ALPHA_U` | packed | 5 | `A` … `Z` |
-| 14 | `B32` | packed | 5 | RFC 4648 base32, `A`…`Z` then `2`…`7` |
-| 15 | `B32H` | packed | 5 | RFC 4648 base32hex, `0`…`9` then `A`…`V` |
-| 16 | `CROCK` | packed | 5 | Crockford, `0123456789ABCDEFGHJKMNPQRSTVWXYZ` |
-| 17 | `B64` | packed | 6 | RFC 4648 base64, `A`…`Z` `a`…`z` `0`…`9` `+` `/` |
-| 18 | `B64U` | packed | 6 | RFC 4648 base64url, `A`…`Z` `a`…`z` `0`…`9` `-` `_` |
-| 19 | `ALNUM` | packed | 6 | `0`…`9` `A`…`Z` `a`…`z` |
-| 20 | `ZSTD` | block-packed | 8 | a zstd frame (Section 10) |
-| 21 | `ZRUN` | none | — | `L` zero bytes (Section 10.2) |
-| 22 | `RUN` | one pair | — | `L` copies of one byte (Section 10.2) |
-| 23 … 30 | `ZMIX_G1` … `ZMIX_G8` | chain | — | zero runs separated by fixed `g`-byte gaps (Section 10.3) |
-| 31 … 43 | — | reserved | | MUST be rejected with `UNKNOWN_CLASS` |
+| 7 | `HEXL` | packed | 4 | `0123456789abcdef` |
+| 8 | `HEXU` | packed | 4 | `0123456789ABCDEF` |
+| 9 | `HEXL_D` | packed | 5 | `HEXL` followed by `-` |
+| 10 | `HEXU_D` | packed | 5 | `HEXU` followed by `-` |
+| 11 | `ALPHA_L` | packed | 5 | `a` … `z` |
+| 12 | `B32` | packed | 5 | RFC 4648 base32, `A`…`Z` then `2`…`7` |
+| 13 | `B32H` | packed | 5 | RFC 4648 base32hex, `0`…`9` then `A`…`V` |
+| 14 | `CROCK` | packed | 5 | Crockford, `0123456789ABCDEFGHJKMNPQRSTVWXYZ` |
+| 15 | `B64` | packed | 6 | RFC 4648 base64, `A`…`Z` `a`…`z` `0`…`9` `+` `/` |
+| 16 | `B64U` | packed | 6 | RFC 4648 base64url, `A`…`Z` `a`…`z` `0`…`9` `-` `_` |
+| 17 | `ZSTD` | block-packed | 8 | a zstd frame (Section 10) |
+| 18 | `ZRUN` | none | — | `L` zero bytes (Section 10.2) |
+| 19 | `RUN` | one pair | — | `L` copies of one byte (Section 10.2) |
+| 20 … 27 | `ZMIX_G1` … `ZMIX_G8` | chain | — | zero runs separated by fixed `g`-byte gaps (Section 10.3) |
+| 28 … 43 | — | reserved | | MUST be rejected with `UNKNOWN_CLASS` |
+
+There is no class for decimal digits, for `A`…`Z` alone, or for the
+alphanumerics. Each of those alphabets is contained in another class's at the
+same width — digits in `HEXL`, capitals in `B32`, alphanumerics in `B64` — and
+a subset at equal width can never produce a shorter segment. Section 18.11 has
+the measurement and what removing them cost, which was nothing.
 
 Classes 1 to 6 are shorthands: they save the two parameter characters of class 0
 on the masks that real data overwhelmingly has, all with `profile = 0`. They are
@@ -489,7 +492,7 @@ For each of the `L` payload characters `c`:
 
 ## 9. Packed bases
 
-Classes 7 to 19. The class names an alphabet of `b` characters and a width
+Classes 7 to 16. The class names an alphabet of `b` characters and a width
 `w = ⌈log₂ b⌉`.
 
 **Encoding.** Each of the `L` input bytes is replaced by its index in the class
@@ -509,18 +512,18 @@ characters, forms the symbols, takes the first `L × w` bits, and maps each
 discarded; an encoder MUST set them to zero and a decoder MAY reject a nonzero
 value with `MALFORMED_PADDING`.
 
-Where `b < 2^w` — classes 7, 10, 11, 12, 13 and 19 — indices from `b` to
-`2^w − 1` cannot be produced. A decoder MUST reject them with `INVALID_INDEX`.
-This is not a checksum, but it is a free structural check, and on `DEC` it
-rejects six values in sixteen.
+Where `b < 2^w` — classes 9, 10 and 11 — indices from `b` to `2^w − 1` cannot
+be produced. A decoder MUST reject them with `INVALID_INDEX`. This is not a
+checksum, but it is a free structural check: on the two hex-with-separator
+classes it rejects fifteen values of thirty-two.
 
 The ratios follow from `w` alone:
 
 | `w` | Characters per byte | Classes |
 |---|---|---|
-| 4 | 0.6154 | `DEC`, `HEXL`, `HEXU` |
-| 5 | 0.7692 | `HEXL_D`, `HEXU_D`, `ALPHA_L`, `ALPHA_U`, `B32`, `B32H`, `CROCK` |
-| 6 | 0.9231 | `B64`, `B64U`, `ALNUM` |
+| 4 | 0.6154 | `HEXL`, `HEXU` |
+| 5 | 0.7692 | `HEXL_D`, `HEXU_D`, `ALPHA_L`, `B32`, `B32H`, `CROCK` |
+| 6 | 0.9231 | `B64`, `B64U` |
 
 A width of seven would give 1.0769, which loses to passthrough; that is why the
 scale stops at six and passthrough takes over.
@@ -531,7 +534,7 @@ scale stops at six and passthrough takes over.
 
 ### 10.1 Compression
 
-Class 20. The payload is a **zstd frame** [RFC8878], packed at `w = 8` through
+Class 17. The payload is a **zstd frame** [RFC8878], packed at `w = 8` through
 the block coder of Section 5.1.
 
 **A compressed payload is block mode and nothing else.** The bytes of a frame
@@ -575,11 +578,11 @@ and that ceiling belongs on the total across all segments, not on each one.
 
 ### 10.2 Runs
 
-Class 21, `ZRUN`, has **no payload at all**: the class is the byte value, and
+Class 18, `ZRUN`, has **no payload at all**: the class is the byte value, and
 the length field alone says how many zero bytes to emit. Three characters carry
 up to 89 of them, five up to 8 369, nine up to `MAX_SEGMENT_BYTES`.
 
-Class 22, `RUN`, adds one pair naming the byte, value `0 … 255`. A pair of 256
+Class 19, `RUN`, adds one pair naming the byte, value `0 … 255`. A pair of 256
 or above is malformed, and so is a pair of zero: that run is a `ZRUN`, and
 Section 11.3 makes the choice canonical rather than optional.
 
@@ -596,7 +599,7 @@ glyph table is short zero runs separated by a few bytes that are not zero, over
 and over, and each of those gaps ends a `ZRUN` and starts another — two signal
 pairs for two bytes of content.
 
-Classes 23 to 30 carry the whole alternation in one segment. The class fixes
+Classes 20 to 27 carry the whole alternation in one segment. The class fixes
 the gap width `g = class − 22`, from one byte to eight, and the segment is:
 
 ```
@@ -725,7 +728,7 @@ Encoder output is deterministic:
    that carries the pending bits.
 6. **Shorthand before general.** Where a passthrough segment's mask and profile
    match one of classes 1 to 6, that class MUST be used rather than class 0.
-7. **`ZRUN` before `RUN`.** A run of zero bytes MUST be class 21, never class 22
+7. **`ZRUN` before `RUN`.** A run of zero bytes MUST be class 18, never class 19
    with a zero payload pair.
 8. **Maximal chain.** A `ZMIX` segment MUST extend while the next gap is exactly
    `g` bytes and the next zero run is at least one byte — subject to
@@ -860,7 +863,7 @@ if V == 8280:
 s     = V - 8192
 hi    = s & 1
 class = s >> 1
-if class > 30:  error UNKNOWN_CLASS
+if class > 27:  error UNKNOWN_CLASS
 
 n_enc = ((8 - n) % 8) + 8 * hi
 if n_enc > 12:  error INVALID_FLUSH
@@ -876,12 +879,12 @@ if class == 0:  read one pair -> p ;  if p > 1023: error INVALID_PARAMS
                 mask = p & 255 ;  profile = p >> 8
 read the length field per Section 7.3       -> L
 if L == 0:  error INVALID_LENGTH
-if class == 20:  if L > MAX_FRAME_BYTES:    error INVALID_LENGTH
+if class == 17:  if L > MAX_FRAME_BYTES:    error INVALID_LENGTH
 else:            if L > MAX_SEGMENT_BYTES:  error INVALID_LENGTH
 ```
 
-Then the payload: Section 8.4 for classes 0–6, Section 9 for 7–19, Section 10.1
-for 20, Section 10.2 for 21 and 22, Section 10.3 for 23–30, whose length field
+Then the payload: Section 8.4 for classes 0–6, Section 9 for 7–16, Section 10.1
+for 17, Section 10.2 for 18 and 19, Section 10.3 for 20–27, whose length field
 counts gaps rather than bytes and whose own bound is on the bytes it emits.
 Block mode resumes immediately afterwards, with `b = n = 0`.
 
@@ -1046,7 +1049,7 @@ walked once — can decode the pieces independently, and that is the only case.
 
 ### 15.4 Adversarial decode
 
-* Classes 31–43 and the escape, which MUST be rejected, not skipped.
+* Classes 28–43 and the escape, which MUST be rejected, not skipped.
 * Every `hi` and pending-bit combination, valid and not, including `n_enc = 14`
   and `n_enc = 15`, which no encoder can produce.
 * Length zero, lengths above the class bound, and a value written in a longer
@@ -1065,7 +1068,7 @@ walked once — can decode the pieces independently, and that is the only case.
 An encoder MAY implement any subset of the classes and remains conforming; its
 output is valid and merely larger. A **decoder MUST implement all of them**,
 because it cannot choose what it receives. An implementation that ships without
-zstd MUST reject class 20 with `UNKNOWN_CLASS` and MUST say so in its
+zstd MUST reject class 17 with `UNKNOWN_CLASS` and MUST say so in its
 documentation — and it should be understood that this makes it a different
 format in practice, not a smaller one.
 
@@ -1554,14 +1557,14 @@ Base64, which is what these fields are encoded with today:
 | protocol text | 840 | 1.3619 | **1.0750** | −21.1 % |
 | **all of them** | **2 381** | **1.3709** | **0.9252** | **−32.5 %** |
 
-Every packed class of Section 7.4 is chosen by something: `DEC` by an account
-number, `HEXL` and `HEXU` by digests, `HEXL_D` and `HEXU_D` by UUIDs, `B32` by
-a TOTP secret, `CROCK` by a ULID, `B64` and `B64U` by tokens, `ALPHA_L` and
-`ALPHA_U` by slugs and codes. `ZRUN` takes thirty-two zero bytes in three
-characters, and `ZMIX` takes a zero-padded record at 0.438.
+Every packed class of Section 7.4 is chosen by something: `HEXL` and `HEXU` by
+digests and account numbers, `HEXL_D` and `HEXU_D` by UUIDs, `B32` by a TOTP
+secret, `CROCK` by a ULID, `B64` and `B64U` by tokens, `ALPHA_L` by a slug.
+`ZRUN` takes thirty-two zero bytes in three characters, and `ZMIX` takes a
+zero-padded record at 0.438.
 
 Where the format does not win is where it should not: four bytes of digits stay
-in block mode because `DEC` cannot pay for a signal there, and a name with
+in block mode because no packed class can pay for a signal there, and a name with
 umlauts runs at 1.240 because a multi-byte character is not representable in
 passthrough (Section 17.15).
 
@@ -1572,7 +1575,7 @@ symbols, so counting the characters it writes understates it — the remainder i
 input it has consumed and has not yet paid for. Comparing written characters
 against written characters favoured block mode by up to two characters, and on
 a short payload two characters is the whole decision: six digits went to block
-mode at eight characters where `DEC` takes seven. Weighing the deferred bits as
+mode at eight characters where `HEXL` takes seven. Weighing the deferred bits as
 well is worth 0.12 % on the core corpus too, where it had been invisible.
 
 The second is still open. The ranking of candidates is greedy, and it compares
@@ -1640,6 +1643,53 @@ the throughput — 477 MB/s against 30 on `countries.json`, 2 258 against 766 on
 the JPEG. The rule an encoder can follow is one line: **entropy below the
 threshold, compress and do not look; above it, do not compress and do not
 scan.**
+
+### 17.18 Whether zstd makes the classes unnecessary
+
+It does not, and the reason is a range it cannot reach.
+
+Over the 55 samples of the short group, none longer than 155 bytes:
+
+| | chars/byte |
+|---|---|
+| **base91-jdp, no compressor** | **0.9252** |
+| Base64 | 1.3709 |
+| zstd −5 in a segment | 1.5250 |
+| zstd 3 in a segment | 1.4040 |
+| zstd 19 in a segment | 1.3864 |
+
+**Compression is worse than Base64 here, at every level**, and it is smaller
+than the plain encoding on two of the fifty-five. A twelve-byte name costs
+2.417 characters per byte through a frame; a sixteen-digit card number, which
+`HEXL` takes at 0.438, costs 1.562. An LZ77 compressor opening on a payload
+this short has an empty window and a frame header longer than the data, and no
+level changes that. Section 18.6 predicted this and the short group measures
+it.
+
+What each family of classes is worth, taken away one at a time:
+
+| classes enabled | short corpus | core corpus |
+|---|---|---|
+| all | **0.9252** | **0.9783** |
+| no runs | 0.9681 | 1.1372 |
+| no packed bases | 1.0491 | 0.9784 |
+| no passthrough | 0.9597 | 1.0620 |
+| block coder alone | 1.2394 | 1.2308 |
+
+Read the two columns against each other. The **runs** carry the core corpus:
+without them it goes to 1.1372, past Base85N and most of the way back to 0.3.0.
+The **packed bases** carry the short corpus and do nothing at all for the core
+one — 0.9784 against 0.9783, which is the fifth decimal. **Passthrough** is the
+only family that matters to both.
+
+That is not an argument for dropping any of them, because the two columns are
+two different jobs. It is an argument that the format has three distinct
+mechanisms because it addresses three distinct shapes of input, and that a
+benchmark on one of them says nothing about the other two.
+
+Where the classes genuinely are dead weight is a long, compressible payload —
+and there they already cost nothing, because Section 11.5 skips the scan before
+any of them is reached.
 
 ### 17.15 What is left on the table
 
@@ -1755,7 +1805,7 @@ conformance tests.
 specification demanding deflate demands a library while LZ4 can be written in a
 few hundred lines. That argument does not survive contact with the actual
 constraint: an implementer who wants compression will link a library whatever
-this document says, and one who does not want it omits class 20.
+this document says, and one who does not want it omits class 17.
 
 zstd replaces it, and replaces deflate as the alternative too, because its level
 range is the size-against-speed control this format wanted to give the caller
@@ -1815,6 +1865,32 @@ length field cannot give — it is in bytes for most classes, gaps for `ZMIX`, a
 the bytes-to-characters ratio is the class's own business. Unknown classes are
 therefore a hard error (Section 15.5), which is at least honest: a decoder says
 what it cannot read rather than silently returning less than it was given.
+
+### 18.11 Three packed classes that were subsumed
+
+Earlier drafts of this version had thirteen packed bases rather than ten:
+`DEC` for decimal digits, `ALPHA_U` for capitals, and `ALNUM` for the
+alphanumerics. All three are gone, and the argument is arithmetic rather than
+measurement.
+
+A class's segment costs a signal, a length field and `2 × ⌈L × w / 13⌉`
+characters. Two classes with the same `w` therefore cost the same for the same
+bytes, and if one alphabet contains the other, every run the narrower class
+can carry the wider one can carry too, at the same price and often further.
+Digits are contained in `HEXL` and both are `w = 4`; capitals are contained in
+`B32` and both are `w = 5`; alphanumerics are contained in `B64` and both are
+`w = 6`. None of the three could ever produce a shorter segment than the class
+that contains it.
+
+Measured, to be sure of it: removing all three leaves the short corpus at
+0.9252 and the core corpus at 0.97831, which is what they were with thirteen
+classes, to every digit reported.
+
+What is lost is a structural check. `DEC` rejected six index values of sixteen,
+`ALPHA_U` six of thirty-two and `ALNUM` two of sixty-four, and their
+replacements reject none. That is not nothing, but it is not a checksum either
+(Section 9), the format makes no integrity claim (Section 2.3), and three
+classes of conformance surface is a real price to pay for it.
 
 ---
 
