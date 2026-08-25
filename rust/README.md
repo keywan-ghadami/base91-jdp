@@ -291,6 +291,28 @@ and 4.7 % at levels 3 and 9 on the core corpus, because each piece starts with
 an empty window. Five bytes are not worth four percent; `examples/onelblock.rs`
 is the measurement.
 
+**A radix-91 arithmetic coder, tried and rejected.** `examples/rans91.rs` is a
+working rANS whose renormalisation base is 91, so it emits alphabet characters
+directly instead of packing bits into them — no packing loss, and it can carry
+a model. It is exact on both corpora, with a uniform model, a trained order-0
+model and an eight-lane interleaved variant.
+
+| | core corpus | short group | MB/s |
+|---|---|---|---|
+| block coder, as shipped | 1.230769 | 1.230769 | 2 950 |
+| rANS, uniform model | 1.228551 | 1.3083 | 110 / 211 interleaved |
+| rANS, trained order-0 | 0.9819 | 1.0475 | |
+| **the classes, as shipped** | **0.9835** | **0.9252** | |
+
+Below the 1.229295 floor on the core corpus, which is not a violation of
+information theory but a small accidental model: the state update grows with
+the symbol's cumulative frequency, so low byte values cost slightly less. It
+vanishes on high-entropy input — three characters over a 61 KB JPEG — which is
+exactly what the block coder sees once compression is on. Meanwhile it is 14×
+slower even interleaved, because base-2ᵏ renormalisation is a shift and base-91
+renormalisation is a division. Specification section 18.12 has the full
+account.
+
 ## A feature flag for more speed
 
 `--features simd` needs **nightly**, because `std::simd` is unstable. It is the

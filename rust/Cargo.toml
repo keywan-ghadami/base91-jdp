@@ -91,3 +91,5 @@ required-features = ["zstd"]
 [[example]]
 name = "firstwin"
 required-features = ["zstd"]
+[[example]]
+name = "rans91"

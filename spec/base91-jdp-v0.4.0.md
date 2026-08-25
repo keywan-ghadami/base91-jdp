@@ -2088,6 +2088,79 @@ replacements reject none. That is not nothing, but it is not a checksum either
 (Section 9), the format makes no integrity claim (Section 2.3), and three
 classes of conformance surface is a real price to pay for it.
 
+### 18.12 A radix-91 arithmetic coder
+
+The block coder converts bits to characters: thirteen bits in, two characters
+out. That is a *packer* carrying a fixed model — every byte equally likely —
+and Section 17.2 prices what it gives up. The obvious next thought is to stop
+converting bits at all: run an asymmetric-numeral-system coder whose
+renormalisation base is 91, so the coder emits alphabet characters directly.
+It has no packing loss by construction, and, unlike a packer, it can carry a
+model.
+
+It was built. `rust/examples/rans91.rs` is a working radix-91 rANS, exact on
+every file of both corpora, with a uniform model, a trained order-0 model and
+an eight-lane interleaved variant. Three measurements decided it.
+
+**As a replacement for the block coder it wins 0.18 %, and only on input that
+is not compressed.** Over the core corpus:
+
+| coder | chars/byte |
+|---|---|
+| block coder, as shipped | 1.230769 |
+| radix-91 rANS, uniform model | 1.228551 |
+| eight bits in ninety-one symbols | 1.229295 |
+
+Note that the rANS is *below* the floor for uniform input. It is not beating
+information theory; it is modelling. `x' = ⌊x/f⌋·M + (x mod f) + c` grows with
+the symbol's cumulative frequency, so a low byte value leaves the state smaller
+and costs a fraction of a character less than a high one. Real files are full
+of low byte values. This is the same accident as basE91's fourteen-bit branch,
+which Section 17.2 measures firing on 47.8 % of pairs in zero-heavy data — and
+it disappears on exactly the input the block coder actually sees. On the JPEG
+the rANS costs 3 characters more than the floor over 61 306 bytes; on the PNG,
+4. **Where compression is on, the block coder's input is compressor output, and
+there the gain is zero.**
+
+**As an entropy coder it loses to what the classes already do.** On the short
+group, which is the one range zstd cannot reach:
+
+| coder | chars/byte |
+|---|---|
+| radix-91 rANS, uniform model | 1.3083 |
+| radix-91 rANS, trained order-0, leave-one-out | 1.0475 |
+| **the classes of Sections 8 to 10** | **0.9252** |
+
+An ideal model does no better. Computed as code length rather than built, an
+adaptive order-0 model reaches 1.0089 and higher orders are worse because
+forty bytes teach them nothing; a table trained on the other fifty-four samples
+and blended with in-payload adaptation reaches 0.9339 at best, and that is
+before it pays for a signal and a length field. The packed bases *are* a static
+model — "this payload is hex, so four bits a character" — and a learned table
+did not beat the authored one.
+
+**And it is fourteen to twenty-seven times slower.** One rANS state is a serial
+dependency chain: every symbol's renormalisation waits on the previous
+symbol's state. Interleaving eight lanes breaks the chain, which is how fast
+rANS implementations reach their speed, and it is still not close:
+
+| stage | MB/s |
+|---|---|
+| block coder alone | 2 950 |
+| rANS, one state | 110 encode, 121 decode |
+| rANS, eight lanes | 211 encode, 297 decode |
+
+The block coder is a table read per pair with no division and no dependency
+between pairs, which is why it vectorises and why Section 17.13 measures it at
+three gigabytes a second. Base-2ᵏ renormalisation is a shift; base-91
+renormalisation is a division, and no lane count makes that a shift.
+
+So: correct, elegant, and worth 0.18 % on input this format sends to a
+compressor anyway, at a fourteenth of the throughput. The prototype stays in
+the tree with its numbers because the idea is a good one that deserves a
+measurement rather than an opinion, and because the state-asymmetry finding is
+worth knowing.
+
 ---
 
 ## 19. References
