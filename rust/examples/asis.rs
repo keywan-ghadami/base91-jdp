@@ -35,7 +35,7 @@ fn main() {
     for p in &v {
         let name = p.file_name().unwrap().to_string_lossy().into_owned();
         let data = fs::read(p).unwrap();
-        let j = base91_jdp::encode(&data).len();
+        let j = base91z::encode_plain(&data).len();
         if !utf8_ok(&data) {
             n_binary += 1;
             continue; // cannot go into a JSON string at all

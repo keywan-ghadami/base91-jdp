@@ -37,8 +37,8 @@ fn main() {
     for (name, raw) in &cases {
         let h = hex(raw);
         let b = b64(raw);
-        let jdp_raw = base91_jdp::encode(raw);
-        let jdp_hex = base91_jdp::encode(h.as_bytes());
+        let jdp_raw = base91z::encode_plain(raw);
+        let jdp_hex = base91z::encode_plain(h.as_bytes());
         println!(
             "| {name} | {} B | {} | {} | **{}** | {} |",
             raw.len(),
@@ -51,8 +51,8 @@ fn main() {
 
     println!("\n### What carried the raw bytes\n");
     for (name, raw) in &cases {
-        let t = base91_jdp::encode(raw);
-        let used = base91_jdp::explain(&t).unwrap();
+        let t = base91z::encode_plain(raw);
+        let used = base91z::explain(&t).unwrap();
         let carried: usize = used.iter().map(|(_, n)| n).sum();
         let names: Vec<String> = used.iter().map(|(c, n)| format!("{c} {n} B")).collect();
         println!(
@@ -71,7 +71,7 @@ fn main() {
         ("hex digest as text", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"),
         ("ULID", "01ARZ3NDEKTSV4RRFFQ69G5FAV"),
     ] {
-        let j = base91_jdp::encode(text.as_bytes()).len();
+        let j = base91z::encode_plain(text.as_bytes()).len();
         println!(
             "| {name} | {} | {j} | {} |",
             text.len(),

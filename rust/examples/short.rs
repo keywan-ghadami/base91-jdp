@@ -37,11 +37,11 @@ fn main() {
     for path in &files {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let data = fs::read(path).unwrap();
-        let text = base91_jdp::encode(&data);
-        assert_eq!(base91_jdp::decode(&text).unwrap(), data, "{name}");
+        let text = base91z::encode_plain(&data);
+        assert_eq!(base91z::decode(&text).unwrap(), data, "{name}");
 
         // Which classes carried it, largest first.
-        let used = base91_jdp::explain(&text).unwrap();
+        let used = base91z::explain(&text).unwrap();
         let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
         for (c, n) in &used {
             *tally.entry(c).or_default() += n;

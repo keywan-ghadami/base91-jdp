@@ -292,8 +292,8 @@ fn main() {
     }
     println!("| rANS, trained order-0, leave-one-out | {:.4} |", trained as f64 / total as f64);
 
-    let jdp: usize = files.iter().map(|(_, d)| base91_jdp::encode(d).len()).sum();
-    println!("| **base91-jdp as it stands** | **{:.4}** | {jdp} |", jdp as f64 / total as f64);
+    let jdp: usize = files.iter().map(|(_, d)| base91z::encode_plain(d).len()).sum();
+    println!("| **Base91z as it stands** | **{:.4}** | {jdp} |", jdp as f64 / total as f64);
 
     // Throughput, which is where a division per symbol has to answer for
     // itself against a table read per pair.
@@ -316,12 +316,12 @@ fn main() {
     {
         let b = &big;
         println!("| block coder alone (`block_only`) | {:.0} |",
-            rate(n, Box::new(|| { std::hint::black_box(base91_jdp::bench::block_only(b).len()); })));
+            rate(n, Box::new(|| { std::hint::black_box(base91z::bench::block_only(b).len()); })));
     }
     {
         let b = &big;
         println!("| the whole encoder, scan included | {:.0} |",
-            rate(n, Box::new(|| { std::hint::black_box(base91_jdp::encode(b).len()); })));
+            rate(n, Box::new(|| { std::hint::black_box(base91z::encode_plain(b).len()); })));
     }
     {
         let (b, m) = (&big, &uniform);
@@ -366,7 +366,7 @@ fn main() {
         let cat = name.split('-').nth(1).unwrap_or("?").to_string();
         let e = by.entry(cat).or_default();
         e.0 += data.len();
-        e.1 += base91_jdp::encode(data).len();
+        e.1 += base91z::encode_plain(data).len();
         e.2 += encode(data, &uniform).len();
         e.3 += encode(data, &m).len();
     }

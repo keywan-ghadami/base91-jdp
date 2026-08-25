@@ -29,7 +29,7 @@ fn main() {
             let b = packed(z.len());
             // The same frame bytes through the ordinary encoder, which is what
             // section 10.1 forbids an encoder from trying.
-            let s = base91_jdp::encode(&z).len();
+            let s = base91z::encode_plain(&z).len();
             let pipe = base85n::encode(&z).len();
             tb += b; ts += s; tp += pipe; tn += d.len();
             println!("| {} | {:.4} | {:.4} | {:+.2} % | {:.4} |",

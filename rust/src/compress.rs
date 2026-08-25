@@ -35,9 +35,16 @@
 //! block; class 20 strips it for the ones that do not, which is where five
 //! bytes are 8 % of the encoding.
 
-use crate::encode::encode;
+use crate::encode::encode_plain;
 use crate::symbols::{block_bulk, length_chars, put_length};
 use crate::tables::{CLASS_ZBLK, CLASS_ZSTD, SIGNAL_MIN};
+
+/// The level [`crate::encode`] uses. Section 17.21 measures the alternatives:
+/// level 1 is 2.7 times smaller than Base85N at 83 % of its throughput, and it
+/// is the first level at which nothing is left in the frame for the scan to
+/// have found (Section 10.1). Below it the output grows faster than the
+/// encoder does.
+pub const DEFAULT_LEVEL: i32 = 1;
 
 /// Payload per frame. Section 17.9 is why it is not the whole input.
 pub const FRAME_PAYLOAD: usize = 1 << 20;
@@ -233,7 +240,7 @@ pub fn encode_zstd(data: &[u8], level: i32) -> std::io::Result<String> {
 /// Build both candidates and return the shorter, which is what section 11.2
 /// requires of a conforming encoder.
 pub fn encode_auto(data: &[u8], level: i32) -> std::io::Result<String> {
-    let plain = encode(data);
+    let plain = encode_plain(data);
     let compressed = encode_zstd(data, level)?;
     Ok(if compressed.len() < plain.len() { compressed } else { plain })
 }
@@ -249,7 +256,7 @@ pub fn encode_auto(data: &[u8], level: i32) -> std::io::Result<String> {
 ///
 /// The threshold is [`crate::detect::ENTROPY_BITS`], unchanged. On the core
 /// corpus it agrees with `encode_auto` on all thirteen files.
-pub fn encode_smart(data: &[u8], level: i32) -> std::io::Result<String> {
+pub fn encode_at(data: &[u8], level: i32) -> std::io::Result<String> {
     if data.len() < COMPARE_BELOW {
         // Small enough that the comparison of section 11.2 is free, and small
         // enough that the entropy sample would be guessing. Below the
@@ -264,7 +271,7 @@ pub fn encode_smart(data: &[u8], level: i32) -> std::io::Result<String> {
         // Already compressed, or close enough that nothing will come off it.
         // The plain path then costs nothing either: section 11.5 skips the
         // scan for exactly this input.
-        return Ok(encode(data));
+        return Ok(encode_plain(data));
     }
     encode_zstd(data, level)
 }

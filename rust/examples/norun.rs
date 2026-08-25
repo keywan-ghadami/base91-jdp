@@ -8,7 +8,7 @@ use std::fs;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
-use base91_jdp::tables::tuning;
+use base91z::tables::tuning;
 
 fn load(d: &str) -> Vec<(String, Vec<u8>)> {
     let mut v: Vec<_> = fs::read_dir(d).unwrap().filter_map(|e| e.ok())
@@ -21,8 +21,8 @@ fn load(d: &str) -> Vec<(String, Vec<u8>)> {
 fn run(files: &[(String, Vec<u8>)], level: Option<i32>) -> (f64, f64) {
     let total: usize = files.iter().map(|(_, d)| d.len()).sum();
     let enc = |d: &[u8]| match level {
-        None => base91_jdp::encode(d).len(),
-        Some(l) => base91_jdp::encode_smart(d, l).unwrap().len(),
+        None => base91z::encode_plain(d).len(),
+        Some(l) => base91z::encode_at(d, l).unwrap().len(),
     };
     let out: usize = files.iter().map(|(_, d)| enc(d)).sum();
     let mut best = f64::MAX;

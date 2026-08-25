@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::sync::atomic::Ordering::Relaxed;
 
-use base91_jdp::tables::tuning;
+use base91z::tables::tuning;
 
 fn load(dir: &str) -> Vec<(String, Vec<u8>)> {
     let mut v: Vec<_> = fs::read_dir(dir).unwrap().filter_map(|e| e.ok())
@@ -27,7 +27,7 @@ fn ratio(files: &[(String, Vec<u8>)]) -> f64 {
     let (mut i, mut o) = (0usize, 0usize);
     for (_, d) in files {
         i += d.len();
-        o += base91_jdp::encode(d).len();
+        o += base91z::encode_plain(d).len();
     }
     o as f64 / i as f64
 }
@@ -44,10 +44,10 @@ fn main() {
     let mut tz = [0usize; 3];
     let mut zwins = 0;
     for (name, data) in &short {
-        let j = base91_jdp::encode(data).len();
+        let j = base91z::encode_plain(data).len();
         let z: Vec<usize> = [-5, 3, 19]
             .iter()
-            .map(|l| base91_jdp::encode_zstd(data, *l).unwrap().len())
+            .map(|l| base91z::encode_zstd(data, *l).unwrap().len())
             .collect();
         if z[1] < j {
             zwins += 1;
@@ -128,7 +128,7 @@ fn main() {
         let mut total = 0usize;
         for (_, d) in files {
             total += d.len();
-            for (c, n) in base91_jdp::explain(&base91_jdp::encode(d)).unwrap() {
+            for (c, n) in base91z::explain(&base91z::encode_plain(d)).unwrap() {
                 *tally.entry(c).or_default() += n;
             }
         }

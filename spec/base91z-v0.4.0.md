@@ -1,4 +1,4 @@
-# base91-jdp: basE91 on a JSON-safe alphabet, with typed segments
+# Base91z: basE91 on a JSON-safe alphabet, with typed segments
 
 | Field | Value |
 |---|---|
@@ -18,9 +18,14 @@
 
 ---
 
+> **Formerly base91-jdp.** Drafts of this format up to and including v0.3.0
+> carried that name; the format is the same lineage and the documents under
+> `spec/history/` keep the name they were published under. Nothing about the
+> wire format changed with the rename.
+
 ## 1. Abstract
 
-base91-jdp represents arbitrary data as text for the case where the result has
+Base91z represents arbitrary data as text for the case where the result has
 to be embedded in **JSON** — an API payload, a log field, a database text
 column, a document inside a document — and where the size of that result
 matters.
@@ -33,7 +38,7 @@ verbatim and the encoded size *is* the final size.
 
 The substitution decides the rest of the format. `-` lands on the alphabet's
 last value, 90, so the pair `--` is worth 8 280 — above everything a
-thirteen-bit symbol can spell. base91-jdp fixes symbols at thirteen bits rather
+thirteen-bit symbol can spell. Base91z fixes symbols at thirteen bits rather
 than letting them float between thirteen and fourteen as basE91 does, which
 leaves **eighty-nine pair values that no encoded stream can contain**. Those
 eighty-nine values are the format's entire signalling mechanism: eighty-eight of
@@ -1108,7 +1113,7 @@ format in practice, not a smaller one.
 
 ## 16. Security considerations
 
-base91-jdp is an encoding, not a cryptographic transform, and it makes no
+Base91z is an encoding, not a cryptographic transform, and it makes no
 integrity claim (Section 2.3). The decoder is the security-relevant surface.
 
 * **A compressed segment expands.** Sections 7.3, 10.1 and 10.2 bound the
@@ -1347,7 +1352,7 @@ the chained classes had been credited with.
 
 Every contender runs the same zstd frame; what differs is the container.
 
-| | Base64 + zstd | Base85N + zstd | **base91-jdp** | margin |
+| | Base64 + zstd | Base85N + zstd | **Base91z** | margin |
 |---|---|---|---|---|
 | core, level 1 | 0.40620 | 0.38072 | **0.37497** | 1.51 % |
 | core, level 3 | 0.37304 | 0.34954 | **0.34436** | 1.48 % |
@@ -1364,7 +1369,7 @@ frames the projection counted slightly differently.
 
 The margin is the 1.56 % of the block coder, less what the segment framing
 costs, and it does not move with the level or the corpus because nothing in it
-depends on the data. base91-jdp is the smaller of the two on **all 25 files of
+depends on the data. Base91z is the smaller of the two on **all 25 files of
 both corpora, at every level**, including the two that do not compress at all.
 
 ### 17.9 What a compressed segment's size costs
@@ -1570,7 +1575,7 @@ becomes 26 on `countries.json`, 382 becomes 85 on `bootstrap.css`.
 Fifty-five field-level samples, 2 381 bytes in all, none over 155. Against
 Base64, which is what these fields are encoded with today:
 
-| what the sample is | bytes | Base64 | base91-jdp | |
+| what the sample is | bytes | Base64 | Base91z | |
 |---|---|---|---|---|
 | hex digests and keys | 408 | 1.3725 | **0.6838** | −50.2 % |
 | decimal identifiers | 130 | 1.4154 | **0.7462** | −47.3 % |
@@ -1710,7 +1715,7 @@ Over the 55 samples of the short group, none longer than 155 bytes:
 
 | | chars/byte |
 |---|---|
-| **base91-jdp, no compressor** | **0.9252** |
+| **Base91z, no compressor** | **0.9252** |
 | Base64 | 1.3709 |
 | zstd −5 in a segment | 1.4217 |
 | zstd 3 in a segment | 1.2713 |
@@ -1845,7 +1850,7 @@ was better without it. It has since been removed; Sections 17.7 and 18.7 are
 the record.
 
 Two faults were found while measuring this, and both were in the encoder rather
-than the format. `encode_smart` compressed payloads of any size, which put the
+than the format. `encode_at` compressed payloads of any size, which put the
 short corpus at 1.4217 characters per byte — worse than Base64 — where building
 both candidates gives 0.9194; below a few kilobytes the comparison is cheap and
 the entropy sample is guessing, so it is made rather than skipped. And a fresh
@@ -1928,8 +1933,8 @@ switches this format's compressor off, because a caller does not have one.
 | | size | encode | decode |
 |---|---|---|---|
 | Base85N 0.5.1 | 1.00698 | 486 MB/s | 1 331 MB/s |
-| **base91-jdp, zstd 1** | **0.37431** | 403 MB/s | 584 MB/s |
-| **base91-jdp, zstd −5** | **0.52271** | **502 MB/s** | 398 MB/s |
+| **Base91z, zstd 1** | **0.37431** | 403 MB/s | 584 MB/s |
+| **Base91z, zstd −5** | **0.52271** | **502 MB/s** | 398 MB/s |
 
 **Level 1 is the recommendation: 2.7 times smaller at 83 % of the encode
 throughput.** Level −5 is for a caller who wants encode throughput above
@@ -1950,7 +1955,7 @@ in front of it. That pipeline is given every advantage here: a stock zstd frame
 over the whole file in one piece, where this format chunks at a mebibyte and
 pays 0.2 % for it (Section 17.9).
 
-| level | base91-jdp | encode | decode | zstd → Base85N | |
+| level | Base91z | encode | decode | zstd → Base85N | |
 |---|---|---|---|---|---|
 | −5 | 0.52271 | 502 MB/s | 403 MB/s | 0.50479 | +3.55 % |
 | −3 | 0.48072 | 474 MB/s | 422 MB/s | 0.46976 | +2.33 % |
@@ -1989,7 +1994,7 @@ Two things, and neither is a measurement.
 delimiters of several text formats at once; this format's 91 are basE91's with
 `"` replaced, chosen to be dense inside a JSON string. What that costs:
 
-| embedding context | base91-jdp | Base85N |
+| embedding context | Base91z | Base85N |
 |---|---|---|
 | JSON string | **safe** | **safe** |
 | XML or HTML text | no — contains `<` and `&` | **safe** |

@@ -25,17 +25,17 @@ fn main() {
     println!("|---|---|---|---|---|---|---|---|---|---|");
     let (mut tin, mut tn, mut ta, mut ts) = (0usize, 0usize, 0usize, 0usize);
     for (name, data) in &files {
-        let none = base91_jdp::encode(data);
-        let z = base91_jdp::encode_zstd(data, level).unwrap();
-        let auto = base91_jdp::encode_auto(data, level).unwrap();
-        let smart = base91_jdp::encode_smart(data, level).unwrap();
-        assert_eq!(base91_jdp::decode(&smart).unwrap(), *data);
-        let rn = rate(data.len(), || { std::hint::black_box(base91_jdp::encode(data).len()); });
-        let rs = rate(data.len(), || { std::hint::black_box(base91_jdp::encode_smart(data, level).unwrap().len()); });
-        let ra = rate(data.len(), || { std::hint::black_box(base91_jdp::encode_auto(data, level).unwrap().len()); });
+        let none = base91z::encode_plain(data);
+        let z = base91z::encode_zstd(data, level).unwrap();
+        let auto = base91z::encode_auto(data, level).unwrap();
+        let smart = base91z::encode_at(data, level).unwrap();
+        assert_eq!(base91z::decode(&smart).unwrap(), *data);
+        let rn = rate(data.len(), || { std::hint::black_box(base91z::encode_plain(data).len()); });
+        let rs = rate(data.len(), || { std::hint::black_box(base91z::encode_at(data, level).unwrap().len()); });
+        let ra = rate(data.len(), || { std::hint::black_box(base91z::encode_auto(data, level).unwrap().len()); });
         tin += data.len(); tn += none.len(); ta += auto.len(); ts += smart.len();
         println!("| {name} | {:.2} | {:.4} | {:.4} | {:.4} | **{:.4}** | {} | {:.0} | {:.0} | {:.0} |",
-            base91_jdp::detect::entropy(data),
+            base91z::detect::entropy(data),
             none.len() as f64 / data.len() as f64,
             z.len() as f64 / data.len() as f64,
             auto.len() as f64 / data.len() as f64,

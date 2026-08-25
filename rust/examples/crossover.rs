@@ -9,9 +9,9 @@ fn main() {
     println!("|---|---|---|---|---|");
     for len in [16usize, 32, 54, 108, 216, 432, 864, 1728, 3456, 6912, 13824] {
         let data: Vec<u8> = unit.iter().cycle().take(len).copied().collect();
-        let p = base91_jdp::encode(&data).len();
-        let z5 = base91_jdp::encode_zstd(&data, -5).unwrap().len();
-        let z3 = base91_jdp::encode_zstd(&data, 3).unwrap().len();
+        let p = base91z::encode_plain(&data).len();
+        let z5 = base91z::encode_zstd(&data, -5).unwrap().len();
+        let z3 = base91z::encode_zstd(&data, 3).unwrap().len();
         let best = if z3.min(z5) < p { "zstd" } else { "**plain**" };
         println!(
             "| {len} | {:.3} | {:.3} | {:.3} | {best} |",
@@ -32,8 +32,8 @@ fn main() {
             data.extend(std::iter::repeat_n(0u8, 22));
         }
         data.truncate(len);
-        let p = base91_jdp::encode(&data).len();
-        let z5 = base91_jdp::encode_zstd(&data, -5).unwrap().len();
+        let p = base91z::encode_plain(&data).len();
+        let z5 = base91z::encode_zstd(&data, -5).unwrap().len();
         println!(
             "| {len} | **{:.3}** | {:.3} | {} |",
             p as f64 / len as f64,

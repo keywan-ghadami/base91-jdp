@@ -35,13 +35,13 @@ fn main() {
         let frame = zstd::bulk::compress(&data, 3).unwrap();
 
         // No compressor at all: the question a caller actually asks first.
-        let plain = base91_jdp::encode(&data);
-        assert_eq!(base91_jdp::decode(&plain).unwrap(), data);
+        let plain = base91z::encode_plain(&data);
+        assert_eq!(base91z::decode(&plain).unwrap(), data);
         let plain_enc = rate(data.len(), || {
-            std::hint::black_box(base91_jdp::encode(&data).len());
+            std::hint::black_box(base91z::encode_plain(&data).len());
         });
         let plain_dec = rate(data.len(), || {
-            std::hint::black_box(base91_jdp::decode(&plain).unwrap().len());
+            std::hint::black_box(base91z::decode(&plain).unwrap().len());
         });
         println!(
             "| none | {:.4} | {:.0} MB/s | -- | {:.0} MB/s | {:.0} MB/s |",
@@ -52,19 +52,19 @@ fn main() {
         );
 
         for level in [-5, -1, 1, 3, 9, 15, 19] {
-            let text = base91_jdp::encode_zstd(&data, level).unwrap();
-            assert_eq!(base91_jdp::decode(&text).unwrap(), data);
+            let text = base91z::encode_zstd(&data, level).unwrap();
+            assert_eq!(base91z::decode(&text).unwrap(), data);
             let whole = rate(data.len(), || {
-                std::hint::black_box(base91_jdp::encode_zstd(&data, level).unwrap().len());
+                std::hint::black_box(base91z::encode_zstd(&data, level).unwrap().len());
             });
             let zonly = rate(data.len(), || {
                 std::hint::black_box(zstd::bulk::compress(&data, level).unwrap().len());
             });
             let conly = rate(frame.len(), || {
-                std::hint::black_box(base91_jdp::bench::block_only(&frame).len());
+                std::hint::black_box(base91z::bench::block_only(&frame).len());
             });
             let dec = rate(data.len(), || {
-                std::hint::black_box(base91_jdp::decode(&text).unwrap().len());
+                std::hint::black_box(base91z::decode(&text).unwrap().len());
             });
             println!(
                 "| {level} | {:.4} | {:.0} MB/s | {:.0} MB/s | {:.0} MB/s | {:.0} MB/s |",
@@ -78,9 +78,9 @@ fn main() {
 
         // What the whole encoder does when it has to earn the right to
         // compress: both candidates built, the shorter kept (section 11.2).
-        let auto = base91_jdp::encode_auto(&data, 3).unwrap();
+        let auto = base91z::encode_auto(&data, 3).unwrap();
         let auto_rate = rate(data.len(), || {
-            std::hint::black_box(base91_jdp::encode_auto(&data, 3).unwrap().len());
+            std::hint::black_box(base91z::encode_auto(&data, 3).unwrap().len());
         });
         println!(
             "| auto, level 3 | {:.4} | {:.0} MB/s | | | |",

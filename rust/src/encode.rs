@@ -126,8 +126,14 @@ impl Encoder {
     }
 }
 
-/// Encode `data` as a complete stream.
-pub fn encode(data: &[u8]) -> String {
+/// Encode `data` without ever compressing it.
+///
+/// [`encode`] is what a caller wants: it compresses where compression pays,
+/// which on anything larger than a hundred bytes or so is most of the time.
+/// This is the container on its own -- passthrough, the packed bases, the runs
+/// and block mode -- for a caller who must keep the payload legible, or who
+/// has already compressed it, or who is measuring one layer at a time.
+pub fn encode_plain(data: &[u8]) -> String {
     let mut enc = Encoder::new();
     // The block coder is the ceiling (section 11.2), so this is enough for any
     // input and the character pushes below never check capacity again. Without

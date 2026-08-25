@@ -36,19 +36,19 @@ fn main() {
             if data.is_empty() {
                 continue;
             }
-            let text = base91_jdp::encode(&data);
+            let text = base91z::encode_plain(&data);
             // Round trip, so a size in this table came from output that reads
             // back. A benchmark that does not decode measures nothing.
-            let back = base91_jdp::decode(&text).expect("decode");
+            let back = base91z::decode(&text).expect("decode");
             assert_eq!(back, data, "{} does not round trip", path.display());
 
             let serial = throughput(&data, || {
-                std::hint::black_box(base91_jdp::encode(&data).len());
+                std::hint::black_box(base91z::encode_plain(&data).len());
             });
-            let (par_text, stats) = base91_jdp::encode_parallel_stats(&data, 4);
+            let (par_text, stats) = base91z::encode_parallel_stats(&data, 4);
             assert_eq!(par_text, text, "{}: parallel differs", path.display());
             let parallel = throughput(&data, || {
-                std::hint::black_box(base91_jdp::encode_parallel(&data, 4).len());
+                std::hint::black_box(base91z::encode_parallel(&data, 4).len());
             });
             let total = stats.spliced + stats.repaired;
             let rate = if total == 0 {

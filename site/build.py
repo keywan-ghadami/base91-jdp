@@ -3,7 +3,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""Static site generator for the base91-jdp project website.
+"""Static site generator for the Base91z project website.
 
 The site has no content of its own: every page, the landing page included, is
 rendered from a Markdown file the repository already ships -- the README, the
@@ -53,13 +53,17 @@ GITHUB_REPO = "https://github.com/keywan-ghadami/base91-jdp"
 GITHUB_BLOB = GITHUB_REPO + "/blob/main/"
 GITHUB_TREE = GITHUB_REPO + "/tree/main/"
 
-SITE_TITLE = "base91-jdp"
+SITE_TITLE = "base91z"
 SITE_TAGLINE = (
     "basE91 on an alphabet that JSON never has to escape. The encoded size is "
     "the final size, and a stream says what it carries."
 )
 
-SPEC_FILE_RE = re.compile(r"^base91-jdp-v(\d+)\.(\d+)\.(\d+)\.md$")
+# The current documents are `base91z-vX.Y.Z.md`. Superseded ones under
+# `spec/history/` keep the name the format had when they were written, which
+# up to v0.3.0 was base91-jdp -- renaming a published document would make it
+# a different document.
+SPEC_FILE_RE = re.compile(r"^(?:base91z|base91-jdp)-v(\d+)\.(\d+)\.(\d+)\.md$")
 # The metadata table at the top of a specification. Older versions bold the
 # field name, newer ones do not, so the asterisks are optional here.
 SPEC_FIELD_RE = re.compile(
@@ -136,7 +140,7 @@ def check_spec_index(index_doc, specs):
     missing = [s["path"] for s in specs
                if not re.search(r"(?<!\.\./)" + re.escape(os.path.basename(s["path"])),
                                 index)]
-    linked = set(re.findall(r"(?<!\.\./)(base91-jdp-v\d+\.\d+\.\d+\.md)", index))
+    linked = set(re.findall(r"(?<!\.\./)(Base91z-v\d+\.\d+\.\d+\.md)", index))
     stale = sorted(linked - names)
     if missing or stale:
         raise SystemExit(
@@ -184,7 +188,7 @@ def spec_pages():
         pages.append(Page(
             source=spec["path"],
             output=spec["path"].replace(".md", ".html"),
-            title="base91-jdp Specification v" + spec["label"],
+            title="Base91z Specification v" + spec["label"],
             toc=True,
             subtitle=subtitle,
             strip_first_heading=True,
@@ -240,7 +244,7 @@ PAGES = [
         # the format is or what it measures.
         source="README.md",
         output="index.html",
-        title="base91-jdp",
+        title="base91z",
         nav_label="Home",
         subtitle=SITE_TAGLINE,
         strip_first_heading=True,
@@ -251,7 +255,7 @@ PAGES = [
         output="spec/index.html",
         title="Specification versions",
         nav_label="Spec",
-        subtitle="Every published version of the base91-jdp specification.",
+        subtitle="Every published version of the Base91z specification.",
         strip_first_heading=True,
     ),
     *spec_pages(),
@@ -361,7 +365,7 @@ TEMPLATE = """<!DOCTYPE html>
 <a class="skip-link" href="#content">Skip to content</a>
 <header class="site-header">
   <div class="wrap header-inner">
-    <a class="brand" href="{root}index.html"><span class="brand-mark">91</span><span>base91-jdp</span></a>
+    <a class="brand" href="{root}index.html"><span class="brand-mark">91</span><span>Base91z</span></a>
     <nav class="site-nav">{nav}
       <a class="nav-external" href="{repo}">GitHub</a>
     </nav>
@@ -379,7 +383,7 @@ TEMPLATE = """<!DOCTYPE html>
 </div>
 <footer class="site-footer">
   <div class="wrap">
-    <p><strong>base91-jdp</strong> - specification v{spec_version} (draft), with
+    <p><strong>Base91z</strong> - specification v{spec_version} (draft), with
     a prototype encoder and decoder in Rust.</p>
     <p class="footer-warn">Specification and implementation were drafted with AI
     assistance and then verified against measurements, and reviews - security,

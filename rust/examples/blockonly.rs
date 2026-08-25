@@ -6,7 +6,7 @@
 use std::fs;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
-use base91_jdp::tables::tuning;
+use base91z::tables::tuning;
 
 fn main() {
     let dir = "bench/corpus/short";
@@ -19,12 +19,12 @@ fn main() {
 
     let measure = |mask: usize| -> (usize, f64) {
         tuning::FAMILIES.store(mask, Relaxed);
-        let out: usize = files.iter().map(|(_, d)| base91_jdp::encode(d).len()).sum();
+        let out: usize = files.iter().map(|(_, d)| base91z::encode_plain(d).len()).sum();
         let total: usize = files.iter().map(|(_, d)| d.len()).sum();
         let mut best = f64::MAX;
         for _ in 0..7 {
             let t = Instant::now();
-            for (_, d) in &files { std::hint::black_box(base91_jdp::encode(d).len()); }
+            for (_, d) in &files { std::hint::black_box(base91z::encode_plain(d).len()); }
             best = best.min(t.elapsed().as_secs_f64());
         }
         tuning::reset();
@@ -59,9 +59,9 @@ fn main() {
     let mut worst: Vec<(isize, String, usize, usize, usize)> = Vec::new();
     for (name, d) in &files {
         tuning::FAMILIES.store(all, Relaxed);
-        let a = base91_jdp::encode(d).len();
+        let a = base91z::encode_plain(d).len();
         tuning::FAMILIES.store(0, Relaxed);
-        let b = base91_jdp::encode(d).len();
+        let b = base91z::encode_plain(d).len();
         tuning::reset();
         worst.push((b as isize - a as isize, name.clone(), d.len(), a, b));
     }

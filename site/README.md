@@ -1,6 +1,6 @@
 # Project website
 
-The site published at <https://keywan-ghadami.github.io/base91-jdp/> is
+The site published at <https://keywan-ghadami.github.io/Base91z/> is
 generated from this directory by [`build.py`](build.py) and deployed by
 [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) on every push to
 `main` that touches the site, the specification, the benchmark report, the
@@ -56,7 +56,7 @@ instead of falling through to a `github.com` URL.
 reader meets: one specification in the navigation, and a history area one link
 away. The build enforces it, and fails if `spec/` ever holds more than one.
 
-`build.py` discovers `base91-jdp-v*.md` in both directories, reads the version,
+`build.py` discovers `Base91z-v*.md` in both directories, reads the version,
 status and date out of the metadata table at the top of each one, sorts them,
 and generates a page per version. The current one keeps its own status, every
 older one is labelled *superseded by* the version that followed it, and the

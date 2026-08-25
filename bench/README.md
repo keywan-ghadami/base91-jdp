@@ -1,7 +1,7 @@
 # Benchmarks
 
 Everything measured about the current format lives in **Section 17 of the
-[specification](../spec/base91-jdp-v0.4.0.md)**, next to the constants it
+[specification](../spec/base91z-v0.4.0.md)**, next to the constants it
 justifies, and is produced by the examples in
 [`rust/`](../rust/README.md). This directory holds what those examples read.
 

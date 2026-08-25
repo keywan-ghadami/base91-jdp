@@ -2,10 +2,24 @@
 
 ## Unreleased — v0.4.0 draft
 
+**The format is now called Base91z.** Drafts up to v0.3.0 were base91-jdp; the
+documents under `spec/history/` keep the name they were published under and
+nothing about the wire format changed with the rename. The crate is `base91z`
+and the specification is `spec/base91z-v0.4.0.md`.
+
+**`encode` is the whole format.** It compresses where compression pays and
+carries the payload with a typed class where it does not — compression is
+Section 10 of the specification, not a stage a caller bolts on, and the entry
+point now says so. What was `encode` is `encode_plain`, for a caller who must
+keep the payload legible or has already compressed it; what was `encode_smart`
+is `encode_at`, which takes the level. `encode` is infallible: there is always
+a valid uncompressed encoding, and a compressor error yields it. The default
+level is 1.
+
 A different format, not a revision of the last one: head-of-stream mode markers
 became typed segments, LZ4 became zstd, and the Reed-Solomon layer went. A
 0.3.0 stream and a 0.4.0 stream do not interoperate and neither decoder reads
-the other's output. The specification is `spec/base91-jdp-v0.4.0.md` and its
+the other's output. The specification is `spec/base91z-v0.4.0.md` and its
 Sections 18.1, 18.4 and 18.5 say why each thing went.
 
 A compressed segment carries as little of a zstd frame as the format can get
@@ -71,7 +85,7 @@ those it is using. All three sit on one change to the block coder.
 ### The fixed thirteen-bit symbol
 
 basE91 lets a pair carry thirteen or fourteen bits, chosen from the data, and
-so reaches all 8 281 pair values. base91-jdp now fixes symbols at thirteen bits.
+so reaches all 8 281 pair values. Base91z now fixes symbols at thirteen bits.
 Thirteen bytes are eight symbols in sixteen characters, exactly, and 8 192
 through 8 280 become values no encoded stream can contain.
 
@@ -106,7 +120,7 @@ we read its blocks, and our ratio lands within 0.7 % of its. Fixtures in
 `test/lz4-fixtures.js` keep that check running without anyone needing the
 reference installed.
 
-Over the corpus base91-jdp is now **0.50264** characters per byte against
+Over the corpus Base91z is now **0.50264** characters per byte against
 Base85N's 1.00698 — twice as good — and against Base85N applied to deflated
 bytes, 0.34039, it is 48 % worse. That is the price of LZ4 over deflate,
 measured rather than assumed. Where it wins outright is data that will not

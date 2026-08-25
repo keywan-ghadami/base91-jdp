@@ -14,7 +14,7 @@
 use std::fs;
 use std::sync::atomic::Ordering::Relaxed;
 
-use base91_jdp::tables::tuning;
+use base91z::tables::tuning;
 
 fn main() {
     let dirs: Vec<String> = std::env::args().skip(1).collect();
@@ -35,7 +35,7 @@ fn main() {
         .collect();
     let total_in: usize = corpus.iter().map(|(_, d)| d.len()).sum();
     let ratio = |corpus: &[(String, Vec<u8>)]| -> f64 {
-        let out: usize = corpus.iter().map(|(_, d)| base91_jdp::encode(d).len()).sum();
+        let out: usize = corpus.iter().map(|(_, d)| base91z::encode_plain(d).len()).sum();
         out as f64 / total_in as f64
     };
 

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! base91-jdp against Base85N, each in the configuration it ships with.
+//! Base91z against Base85N, each in the configuration it ships with.
 //!
 //! Both codecs are built from source and run in this process under the same
 //! timing loop, so what is compared is two encodings and not two languages.
@@ -62,15 +62,15 @@ fn main() {
 
     // Nothing is reported that did not come back.
     for d in &files {
-        let a = base91_jdp::encode_smart(d, 1).unwrap();
-        assert_eq!(base91_jdp::decode(&a).unwrap(), *d);
+        let a = base91z::encode_at(d, 1).unwrap();
+        assert_eq!(base91z::decode(&a).unwrap(), *d);
         let b = base85n::encode(d);
         assert_eq!(base85n::decode(&b).unwrap(), *d);
     }
 
     let size = |out: &[String]| out.iter().map(String::len).sum::<usize>();
     let jdp = |level: i32| -> Vec<String> {
-        files.iter().map(|d| base91_jdp::encode_smart(d, level).unwrap()).collect()
+        files.iter().map(|d| base91z::encode_at(d, level).unwrap()).collect()
     };
 
     println!("## {} files, {total} bytes\n", files.len());
@@ -88,19 +88,19 @@ fn main() {
         let out = jdp(level);
         let n = size(&out);
         println!(
-            "| **base91-jdp, zstd {level}** ({note}) | **{:.5}** | {:.0} MB/s | {:.0} MB/s |",
+            "| **Base91z, zstd {level}** ({note}) | **{:.5}** | {:.0} MB/s | {:.0} MB/s |",
             n as f64 / total as f64,
             rate(total, || for d in &files {
-                std::hint::black_box(base91_jdp::encode_smart(d, level).unwrap().len());
+                std::hint::black_box(base91z::encode_at(d, level).unwrap().len());
             }),
             rate(total, || for s in &out {
-                std::hint::black_box(base91_jdp::decode(s).unwrap().len());
+                std::hint::black_box(base91z::decode(s).unwrap().len());
             })
         );
     }
 
     println!("\n### Every level, and what a Base85N caller would have to build\n");
-    println!("| level | base91-jdp | encode | decode | zstd → Base85N | |");
+    println!("| level | Base91z | encode | decode | zstd → Base85N | |");
     println!("|---|---|---|---|---|---|");
     for level in [-5i32, -3, -1, 1, 2, 3, 5, 9] {
         let out = jdp(level);
@@ -110,10 +110,10 @@ fn main() {
             "| {level} | **{:.5}** | {:.0} MB/s | {:.0} MB/s | {:.5} | {} |",
             n as f64 / total as f64,
             rate(total, || for d in &files {
-                std::hint::black_box(base91_jdp::encode_smart(d, level).unwrap().len());
+                std::hint::black_box(base91z::encode_at(d, level).unwrap().len());
             }),
             rate(total, || for s in &out {
-                std::hint::black_box(base91_jdp::decode(s).unwrap().len());
+                std::hint::black_box(base91z::decode(s).unwrap().len());
             }),
             p as f64 / total as f64,
             pct(n, p)
@@ -127,7 +127,7 @@ fn main() {
          is nothing left to find and this format is ahead everywhere."
     );
 
-    let plain: usize = files.iter().map(|d| base91_jdp::encode(d).len()).sum();
+    let plain: usize = files.iter().map(|d| base91z::encode_plain(d).len()).sum();
     println!(
         "\n### The containers alone, for the record\n\n\
          Neither side compressing -- a build of this crate that cannot link\n\
@@ -135,14 +135,14 @@ fn main() {
          in the comparison above; it says what the container is worth.\n\n\
          | | size | encode | decode |\n|---|---|---|---|\n\
          | Base85N | {:.5} | {e85:.0} MB/s | {d85:.0} MB/s |\n\
-         | base91-jdp, no compressor | **{:.5}** ({}) | {:.0} MB/s | {:.0} MB/s |",
+         | Base91z, no compressor | **{:.5}** ({}) | {:.0} MB/s | {:.0} MB/s |",
         n85 as f64 / total as f64,
         plain as f64 / total as f64,
         pct(plain, n85),
-        rate(total, || for d in &files { std::hint::black_box(base91_jdp::encode(d).len()); }),
+        rate(total, || for d in &files { std::hint::black_box(base91z::encode_plain(d).len()); }),
         {
-            let out: Vec<String> = files.iter().map(|d| base91_jdp::encode(d)).collect();
-            rate(total, || for s in &out { std::hint::black_box(base91_jdp::decode(s).unwrap().len()); })
+            let out: Vec<String> = files.iter().map(|d| base91z::encode_plain(d)).collect();
+            rate(total, || for s in &out { std::hint::black_box(base91z::decode(s).unwrap().len()); })
         }
     );
 }

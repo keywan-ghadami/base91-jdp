@@ -79,11 +79,11 @@ fn main() {
 
         // And the whole encoder, which is the third row plus the packer.
         let d_big = rate(big.len(), 1, || {
-            std::hint::black_box(base91_jdp::encode_zstd(&big, level).unwrap().len());
+            std::hint::black_box(base91z::encode_zstd(&big, level).unwrap().len());
         });
         let d_small = rate(small_bytes, 1, || {
             for d in &small {
-                std::hint::black_box(base91_jdp::encode_zstd(d, level).unwrap().len());
+                std::hint::black_box(base91z::encode_zstd(d, level).unwrap().len());
             }
         });
         println!("| **the encoder: that plus packing** | **{d_big:.0} MB/s** | **{d_small:.0} MB/s** |");

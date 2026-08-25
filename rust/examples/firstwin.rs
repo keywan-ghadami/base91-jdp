@@ -41,11 +41,11 @@ fn crossover(make: Shape, level: i32, max: usize) -> Cross {
     let mut run_from = None;
     for len in 1..=max {
         let data = make(len);
-        let plain = base91_jdp::encode(&data).len();
+        let plain = base91z::encode_plain(&data).len();
         if before(&data, level) < plain {
             first_before.get_or_insert(len);
         }
-        if base91_jdp::encode_zstd(&data, level).unwrap().len() < plain {
+        if base91z::encode_zstd(&data, level).unwrap().len() < plain {
             first.get_or_insert(len);
             run_from.get_or_insert(len);
         } else {

@@ -29,12 +29,12 @@ fn main() {
     println!("|---|---|---|---|---|---|");
     let (mut tin, mut tp, mut tz, mut ta) = (0usize, 0usize, 0usize, 0usize);
     for (name, data) in &files {
-        let plain = base91_jdp::encode(data);
-        let z = base91_jdp::encode_zstd(data, 3).unwrap();
-        let auto = base91_jdp::encode_auto(data, 3).unwrap();
-        assert_eq!(base91_jdp::decode(&auto).unwrap(), *data);
-        let zr = rate(data.len(), || { std::hint::black_box(base91_jdp::encode_zstd(data, 3).unwrap().len()); });
-        let ar = rate(data.len(), || { std::hint::black_box(base91_jdp::encode_auto(data, 3).unwrap().len()); });
+        let plain = base91z::encode_plain(data);
+        let z = base91z::encode_zstd(data, 3).unwrap();
+        let auto = base91z::encode_auto(data, 3).unwrap();
+        assert_eq!(base91z::decode(&auto).unwrap(), *data);
+        let zr = rate(data.len(), || { std::hint::black_box(base91z::encode_zstd(data, 3).unwrap().len()); });
+        let ar = rate(data.len(), || { std::hint::black_box(base91z::encode_auto(data, 3).unwrap().len()); });
         tin += data.len(); tp += plain.len(); tz += z.len(); ta += auto.len();
         println!("| {name} | {:.4} | {:.4} | {} | {:.0} MB/s | {:.0} MB/s |",
             plain.len() as f64 / data.len() as f64,

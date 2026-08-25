@@ -24,10 +24,10 @@ fn main() {
     for p in &paths {
         let name = p.file_name().unwrap().to_string_lossy().into_owned();
         let data = std::fs::read(p).unwrap();
-        let a = base91_jdp::encode(&data);
+        let a = base91z::encode_plain(&data);
         let b = base85n::encode(&data);
         // What the stream is made of, largest first, so a slow row can be read.
-        let mut used = base91_jdp::explain(&a).unwrap();
+        let mut used = base91z::explain(&a).unwrap();
         used.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
         let carried: usize = used.iter().map(|(_, n)| n).sum();
         let mut what: Vec<String> = used.iter().take(2)
@@ -36,7 +36,7 @@ fn main() {
             what.push(format!("block {}%", 100 * (data.len() - carried) / data.len()));
         }
         println!("| {name} | {} | {:.0} MB/s | {:.0} MB/s |", what.join(", "),
-            rate(data.len(), || { std::hint::black_box(base91_jdp::decode(&a).unwrap().len()); }),
+            rate(data.len(), || { std::hint::black_box(base91z::decode(&a).unwrap().len()); }),
             rate(data.len(), || { std::hint::black_box(base85n::decode(&b).unwrap().len()); }));
     }
 }

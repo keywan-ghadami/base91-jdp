@@ -1,8 +1,8 @@
 {
-  "name": "base91-jdp-tools",
+  "name": "Base91z-tools",
   "version": "0.4.0",
   "private": true,
-  "description": "Corpus and website tooling for base91-jdp. The format itself is specified in spec/ and implemented in rust/; this manifest publishes nothing.",
+  "description": "Corpus and website tooling for Base91z. The format itself is specified in spec/ and implemented in rust/; this manifest publishes nothing.",
   "type": "module",
   "scripts": {
     "corpus": "python3 bench/corpus.py",

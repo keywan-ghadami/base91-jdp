@@ -1,4 +1,4 @@
-# base91-jdp, Rust prototype
+# Base91z, Rust prototype
 
 An encoder and decoder for **specification v0.4.0**, written to find out
 whether the format encodes at the density the specification projected, and
@@ -6,9 +6,22 @@ whether the parallel and vector paths it was shaped for actually pay.
 
 ```rust
 let data = b"{\"user\":\"ada\",\"id\":42}";
-let text = base91_jdp::encode(data);
-assert_eq!(base91_jdp::decode(&text).unwrap(), data);
+let text = base91z::encode(data);
+assert_eq!(base91z::decode(&text).unwrap(), data);
 ```
+
+## The entry points
+
+| | |
+|---|---|
+| `encode(data) -> String` | What a caller wants. Compresses where compression pays, at `DEFAULT_LEVEL` (1), and carries the payload with a typed class where it does not. Infallible: a compressor error yields the uncompressed encoding, which is always valid. |
+| `encode_at(data, level) -> io::Result<String>` | The same with the level chosen. Negative levels encode faster and larger, higher ones slower and smaller; specification section 17.21 has the table. |
+| `encode_plain(data) -> String` | Never compresses. The container on its own, for a caller who must keep the payload legible or has already compressed it. |
+| `decode(text) -> Result<Vec<u8>>` | Reads any of them. `decode_bounded` takes a ceiling on the output, which a caller accepting untrusted input needs (section 16). |
+| `encode_parallel(data, threads)` | Byte-identical to `encode_plain`, on several threads. |
+
+Without the `zstd` feature, `encode` is `encode_plain` and the decoder refuses
+classes 17 and 20 with `Code::UnknownClass`, as section 15.5 requires.
 
 ```sh
 cargo test                                    # round trip, canonicity, adversarial decode
@@ -183,7 +196,7 @@ hands the container a payload with nothing in it to look for.
 
 It reverses completely on a JPEG — 1.2308 at 2 493 MB/s uncompressed against
 1.2311 at 1 229 compressed — and the same entropy sample tells the two apart.
-`encode_smart` decides from it and builds only one candidate; over the core
+`encode` decides from it and builds only one candidate; over the core
 corpus it produces byte-identical output to `encode_auto`'s build-both on all
 thirteen files at every level tried, at three to thirteen times the throughput.
 

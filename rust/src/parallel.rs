@@ -28,7 +28,7 @@
 
 use std::thread;
 
-use crate::encode::{encode, encode_region, encode_region_until, Encoder, State};
+use crate::encode::{encode_plain, encode_region, encode_region_until, Encoder, State};
 use crate::tables::PARALLEL_ALIGN;
 
 /// Below this a chunk is not worth a thread.
@@ -57,7 +57,7 @@ pub fn encode_parallel(data: &[u8], threads: usize) -> String {
 pub fn encode_parallel_stats(data: &[u8], threads: usize) -> (String, ParallelStats) {
     let threads = threads.max(1);
     if threads == 1 || data.len() < 2 * MIN_PARALLEL_CHUNK {
-        return (encode(data), ParallelStats::default());
+        return (encode_plain(data), ParallelStats::default());
     }
     let chunk = ((data.len() / threads).max(MIN_PARALLEL_CHUNK) / PARALLEL_ALIGN) * PARALLEL_ALIGN;
     encode_with_chunk_stats(data, chunk)

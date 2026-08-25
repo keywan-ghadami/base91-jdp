@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::sync::atomic::Ordering::Relaxed;
-use base91_jdp::tables::tuning;
+use base91z::tables::tuning;
 
 fn load(d: &str) -> Vec<(String, Vec<u8>)> {
     let mut v: Vec<_> = fs::read_dir(d).unwrap().filter_map(|e| e.ok())
@@ -23,8 +23,8 @@ fn main() {
     let mut total = 0usize;
     for (_, d) in &core {
         total += d.len();
-        let text = base91_jdp::encode_smart(d, -5).unwrap();
-        for (c, n) in base91_jdp::explain(&text).unwrap() {
+        let text = base91z::encode_at(d, -5).unwrap();
+        for (c, n) in base91z::explain(&text).unwrap() {
             *tally.entry(c).or_default() += n;
         }
     }
@@ -45,8 +45,8 @@ fn main() {
         for (_, d) in f {
             i += d.len();
             o += match comp {
-                None => base91_jdp::encode(d).len(),
-                Some(l) => base91_jdp::encode_smart(d, l).unwrap().len(),
+                None => base91z::encode_plain(d).len(),
+                Some(l) => base91z::encode_at(d, l).unwrap().len(),
             };
         }
         o as f64 / i as f64

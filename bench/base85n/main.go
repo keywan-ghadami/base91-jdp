@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Encoded sizes for Base85N v0.5.1, the codec base91-jdp is compared against.
+// Encoded sizes for Base85N v0.5.1, the codec Base91z is compared against.
 //
 // The numbers in bench/results/RESULTS.md are measured with the upstream
 // implementation rather than quoted from its documentation, which is what

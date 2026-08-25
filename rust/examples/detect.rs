@@ -8,8 +8,8 @@ use std::fs;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
-use base91_jdp::detect::{self, WINDOW};
-use base91_jdp::tables::tuning;
+use base91z::detect::{self, WINDOW};
+use base91z::tables::tuning;
 
 fn main() {
     let dirs: Vec<String> = std::env::args().skip(1).collect();
@@ -41,19 +41,19 @@ fn main() {
             .count();
 
         tuning::DETECT.store(1, Relaxed);
-        let on = base91_jdp::encode(data);
+        let on = base91z::encode_plain(data);
         let on_rate = rate(data, || {
-            std::hint::black_box(base91_jdp::encode(data).len());
+            std::hint::black_box(base91z::encode_plain(data).len());
         });
         tuning::DETECT.store(0, Relaxed);
-        let off = base91_jdp::encode(data);
+        let off = base91z::encode_plain(data);
         let off_rate = rate(data, || {
-            std::hint::black_box(base91_jdp::encode(data).len());
+            std::hint::black_box(base91z::encode_plain(data).len());
         });
         tuning::reset();
 
-        assert_eq!(base91_jdp::decode(&on).unwrap(), *data, "{name}: decision on");
-        assert_eq!(base91_jdp::decode(&off).unwrap(), *data, "{name}: decision off");
+        assert_eq!(base91z::decode(&on).unwrap(), *data, "{name}: decision on");
+        assert_eq!(base91z::decode(&off).unwrap(), *data, "{name}: decision off");
 
         tin += data.len();
         ton += on.len();

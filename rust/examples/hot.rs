@@ -6,7 +6,7 @@
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
-use base91_jdp::tables::tuning;
+use base91z::tables::tuning;
 
 fn rate(label: &str, data: &[u8], mut f: impl FnMut()) {
     let mut best = f64::MAX;
@@ -28,16 +28,16 @@ fn main() {
             (x >> 24) as u8
         })
         .collect();
-    println!("entropy of the sample: {:.3} bits/byte\n", base91_jdp::detect::entropy(&data));
+    println!("entropy of the sample: {:.3} bits/byte\n", base91z::detect::entropy(&data));
 
     println!("| what | rate |");
     println!("|---|---|");
     rate("whole encoder", &data, || {
-        std::hint::black_box(base91_jdp::encode(&data).len());
+        std::hint::black_box(base91z::encode_plain(&data).len());
     });
     tuning::DETECT.store(0, Relaxed);
     rate("without the window decision", &data, || {
-        std::hint::black_box(base91_jdp::encode(&data).len());
+        std::hint::black_box(base91z::encode_plain(&data).len());
     });
     for (label, mask) in [
         ("... and without passthrough", tuning::F_RUN | tuning::F_PACKED),
@@ -46,11 +46,11 @@ fn main() {
     ] {
         tuning::FAMILIES.store(mask, Relaxed);
         rate(label, &data, || {
-            std::hint::black_box(base91_jdp::encode(&data).len());
+            std::hint::black_box(base91z::encode_plain(&data).len());
         });
     }
     tuning::reset();
     rate("block coder alone", &data, || {
-        std::hint::black_box(base91_jdp::bench::block_only(&data).len());
+        std::hint::black_box(base91z::bench::block_only(&data).len());
     });
 }

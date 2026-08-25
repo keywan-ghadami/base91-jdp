@@ -5,13 +5,13 @@
 //! Round trip, the guarantees the specification states as guarantees, and the
 //! adversarial decode of section 15.4.
 
-use base91_jdp::tables::{ALPHABET, PARALLEL_ALIGN, VALUE_OF};
-use base91_jdp::{decode, encode, encode_with_chunk, Code};
+use base91z::tables::{ALPHABET, PARALLEL_ALIGN, VALUE_OF};
+use base91z::{decode, encode_plain, encode_with_chunk, Code};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 fn trip(data: &[u8]) -> String {
-    let text = encode(data);
+    let text = encode_plain(data);
     for &b in text.as_bytes() {
         assert!(VALUE_OF[b as usize] != 0xFF, "output outside the alphabet: {:?}", b as char);
     }
@@ -160,7 +160,7 @@ fn parallel_is_identical_to_serial() {
         data.extend_from_slice(b"deadbeefcafebabe");
         data.extend((0..(round % 29)).map(|_| rng.random::<u8>()));
     }
-    let serial = encode(&data);
+    let serial = encode_plain(&data);
     for chunk in [PARALLEL_ALIGN, 2 * PARALLEL_ALIGN, 13 * 40, 13 * 977] {
         assert_eq!(encode_with_chunk(&data, chunk), serial, "chunk {chunk}");
     }
@@ -216,7 +216,7 @@ fn the_reciprocal_divides_exactly() {
     // because a derivation that is nearly right here is a codec that is nearly
     // right everywhere.
     for v in 0u32..=8280 {
-        assert_eq!(base91_jdp::bench::div91(v), v / 91, "div91({v})");
+        assert_eq!(base91z::bench::div91(v), v / 91, "div91({v})");
     }
 }
 
@@ -229,7 +229,7 @@ fn simd_extract_matches_scalar() {
     let mut rng = StdRng::seed_from_u64(0xB10C);
     for _ in 0..20_000 {
         let g: [u8; 16] = rng.random();
-        let got = base91_jdp::simd::extract_group(&g);
+        let got = base91z::simd::extract_group(&g);
         let whole = u128::from_be_bytes(g);
         for k in 0..8u32 {
             let want = ((whole >> (115 - 13 * k)) & 8191) as u32;
@@ -238,9 +238,42 @@ fn simd_extract_matches_scalar() {
     }
 }
 
+/// The default entry point compresses where compression pays and does not
+/// where it does not, and both come back. The point of the rename: a caller
+/// who writes `encode` gets the format, not a subset of it.
+#[test]
+#[cfg(feature = "zstd")]
+fn the_default_encode_uses_the_whole_format() {
+    use base91z::encode;
+
+    // A field: too short for a window, carried by the classes.
+    let field = b"{\"user\":\"ada\",\"id\":42,\"role\":\"admin\"}";
+    let t = encode(field);
+    assert_eq!(decode(&t).unwrap(), field);
+    assert_eq!(t, encode_plain(field), "a field should not reach for a frame");
+
+    // A document: compressed, and much smaller than the container alone.
+    let doc: Vec<u8> = std::iter::repeat_n(&field[..], 400).flatten().copied().collect();
+    let t = encode(&doc);
+    assert_eq!(decode(&t).unwrap(), doc);
+    assert!(
+        t.len() * 4 < encode_plain(&doc).len(),
+        "{} against {}",
+        t.len(),
+        encode_plain(&doc).len()
+    );
+
+    // Never worse than the container, whatever the input.
+    for n in [0usize, 1, 13, 200, 5000] {
+        let d: Vec<u8> = (0..n).map(|i| (i * 7919 % 251) as u8).collect();
+        assert!(encode(&d).len() <= encode_plain(&d).len(), "{n} bytes");
+        assert_eq!(decode(&encode(&d)).unwrap(), d);
+    }
+}
+
 #[cfg(feature = "zstd")]
 mod compressed {
-    use base91_jdp::{decode, decode_bounded, encode_auto, encode_zstd, Code};
+    use base91z::{decode, decode_bounded, encode_auto, encode_zstd, Code};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
 
@@ -251,7 +284,7 @@ mod compressed {
         assert_eq!(decode(&auto).unwrap(), data, "auto, {} bytes", data.len());
         // Section 11.2: the compressed candidate is taken only when it wins.
         assert!(auto.len() <= text.len());
-        assert!(auto.len() <= base91_jdp::encode(data).len());
+        assert!(auto.len() <= base91z::encode_plain(data).len());
     }
 
     #[test]
@@ -281,7 +314,7 @@ mod compressed {
     fn a_single_block_payload_is_stripped_and_a_larger_one_is_not() {
         let unit = b"the quick brown fox jumps over the lazy dog. ";
         let classes = |text: &str| -> Vec<String> {
-            base91_jdp::explain(text)
+            base91z::explain(text)
                 .unwrap()
                 .into_iter()
                 .map(|(c, _)| c.to_string())

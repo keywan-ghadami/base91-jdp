@@ -1,11 +1,11 @@
 [package]
-name = "base91-jdp"
+name = "base91z"
 # Major and minor track the specification version this crate implements -- the
 # wire format is what a consumer depends on. The patch level is the crate's own.
 version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
-description = "base91-jdp: basE91 on a JSON-safe alphabet, with typed segments. Prototype encoder and decoder for specification v0.4.0."
+description = "Base91z: basE91 on a JSON-safe alphabet, with typed segments. Prototype encoder and decoder for specification v0.4.0."
 license = "MPL-2.0"
 authors = ["Keywan Ghadami"]
 repository = "https://github.com/keywan-ghadami/base91-jdp"
@@ -13,7 +13,7 @@ keywords = ["base91", "base64", "encoding", "binary-to-text", "json"]
 categories = ["encoding", "text-processing"]
 
 [lib]
-name = "base91_jdp"
+name = "base91z"
 path = "src/lib.rs"
 
 [features]
@@ -42,6 +42,11 @@ zstd = { version = "0.13.3", optional = true, features = ["experimental"] }
 # default and used by no part of the library; it needs a Base85N checkout
 # beside this repository.
 base85n = { path = "../../keywan-ghadami/base85n/rust", optional = true }
+
+# Deflate, for the one comparison that needs it: basE91 over a deflate stream
+# is what a caller reached for before zstd existed, and `examples/against.rs`
+# measures it. Off by default and used by no part of the library.
+flate2 = { version = "1", optional = true }
 
 [dev-dependencies]
 rand = "0.9"
@@ -109,3 +114,6 @@ required-features = ["base85n"]
 [[example]]
 name = "scanframe"
 required-features = ["zstd", "base85n"]
+[[example]]
+name = "against"
+required-features = ["zstd", "base85n", "flate2"]
