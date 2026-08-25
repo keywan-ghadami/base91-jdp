@@ -13,6 +13,25 @@
 use crate::error::{Code, Error, Result};
 use crate::tables::*;
 
+#[cfg(feature = "zstd")]
+use std::io::Read;
+
+/// The most a decoder reserves up front on a frame's own word about how big it
+/// will be. Past this the buffer grows as bytes actually arrive.
+#[cfg(feature = "zstd")]
+const RESERVE_CAP: usize = 1 << 26;
+
+/// The content size a frame declares, where it declares one. A hint for the
+/// allocation, never a bound: the bound is the caller's.
+#[cfg(feature = "zstd")]
+fn frame_content_size(frame: &[u8]) -> usize {
+    zstd::zstd_safe::get_frame_content_size(frame)
+        .ok()
+        .flatten()
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(0)
+}
+
 pub struct Decoder<'a> {
     src: Vec<u8>, // significant characters only
     raw: &'a [u8],
@@ -213,9 +232,7 @@ impl<'a> Decoder<'a> {
         if class > CLASS_MAX_DEFINED {
             return Err(self.err(Code::UnknownClass, "a class this version does not define"));
         }
-        if class == CLASS_ZSTD {
-            return Err(self.err(Code::Unsupported, "this prototype carries no zstd"));
-        }
+
 
         // The flush field, section 7.2.
         let n_enc = ((8 - self.n) % 8) + 8 * hi;
@@ -272,6 +289,46 @@ impl<'a> Decoder<'a> {
                     }
                 }
             }
+            CLASS_ZSTD => {
+                #[cfg(not(feature = "zstd"))]
+                {
+                    return Err(self.err(Code::UnknownClass, "built without class 20"));
+                }
+                #[cfg(feature = "zstd")]
+                {
+                    let l = self.bounded_length(crate::tables::MAX_FRAME_BYTES)?;
+                    // The frame is read as bytes through the block coder, then
+                    // handed to zstd whole. Nothing about it is this format's
+                    // business -- not its length, which the field above gave,
+                    // and not its checksum.
+                    let mut frame = Vec::with_capacity(l);
+                    self.read_packed_bytes(l, &mut frame)?;
+                    // Section 16: the expansion is attacker-controlled, so the
+                    // ceiling has to bound what is *allocated* and not only
+                    // what is kept. Handing the remaining budget to a one-shot
+                    // decompressor asks it to reserve that much up front --
+                    // with the default budget that is an exabyte, and the
+                    // first version of this line aborted the process on a
+                    // one-megabyte input. Reading through a capped reader
+                    // grows the buffer as the frame actually produces bytes.
+                    let limit = self.budget.saturating_sub(out.len());
+                    let mut reader = zstd::stream::read::Decoder::new(&frame[..])
+                        .map_err(|_| self.err(Code::MalformedFrame, "not a zstd frame"))?;
+                    let mut plain = Vec::new();
+                    plain.reserve(frame_content_size(&frame).min(limit).min(RESERVE_CAP));
+                    // One byte past the ceiling, so a frame that would exceed
+                    // it is caught rather than truncated silently.
+                    Read::take(&mut reader, limit as u64 + 1)
+                        .read_to_end(&mut plain)
+                        .map_err(|_| {
+                            self.err(Code::MalformedFrame, "the decompressor refused the frame")
+                        })?;
+                    if plain.len() > limit {
+                        return Err(self.err(Code::InvalidLength, "output ceiling exceeded"));
+                    }
+                    out.extend_from_slice(&plain);
+                }
+            }
             CLASS_PACKED_FIRST..=CLASS_PACKED_LAST => {
                 let ci = (class - CLASS_PACKED_FIRST) as usize;
                 let l = self.bounded_length(MAX_SEGMENT_BYTES)?;
@@ -307,6 +364,31 @@ impl<'a> Decoder<'a> {
                     }
                     self.emit(out, byte)?;
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// `count` bytes packed at eight bits each, into a caller's buffer rather
+    /// than the output: a compressed frame is not output until zstd has seen
+    /// it.
+    #[cfg(feature = "zstd")]
+    fn read_packed_bytes(&mut self, count: usize, into: &mut Vec<u8>) -> Result<()> {
+        let chars = 2 * ((count * 8 + 12) / 13);
+        if self.left() < chars {
+            return Err(self.err(Code::UnexpectedEos, "a compressed payload"));
+        }
+        let (mut bits, mut nb) = (0u64, 0u32);
+        while into.len() < count {
+            let v = self.take_pair()?;
+            if v >= SIGNAL_MIN {
+                return Err(self.err(Code::InvalidCharacter, "a signal inside a frame"));
+            }
+            bits = (bits << SYMBOL_BITS) | v as u64;
+            nb += SYMBOL_BITS;
+            while nb >= 8 && into.len() < count {
+                nb -= 8;
+                into.push(((bits >> nb) & 0xFF) as u8);
             }
         }
         Ok(())

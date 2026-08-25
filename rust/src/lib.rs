@@ -17,21 +17,23 @@
 //! assert_eq!(base91_jdp::decode(&text).unwrap(), data);
 //! ```
 //!
-//! **This is a prototype.** It implements the passthrough, packed-base and run
-//! classes of the specification and the block coder under them; it does not
-//! implement class 20, the zstd segment, and rejects it on decode with
-//! `Code::Unsupported`. What it exists to answer is whether the format encodes
-//! at the density the specification projects, and whether the parallel and
-//! vector paths the format was shaped for actually pay.
+//! **This is a prototype.** It implements every class of the specification --
+//! passthrough, the packed bases, the runs and chained gaps, and the
+//! compressed segment behind the default `zstd` feature -- with a decoder for
+//! each. What it exists to answer is whether the format encodes at the density
+//! the specification projects, and whether the parallel and vector paths the
+//! format was shaped for actually pay.
 
 pub mod error;
 pub mod tables;
 
+#[cfg(feature = "zstd")]
+pub mod compress;
 mod decode;
 pub mod detect;
 mod encode;
 mod parallel;
-mod symbols;
+pub(crate) mod symbols;
 
 #[cfg(feature = "simd")]
 pub mod simd;
@@ -43,6 +45,8 @@ pub mod bench {
     pub use crate::symbols::div91;
 }
 
+#[cfg(feature = "zstd")]
+pub use compress::{encode_auto, encode_zstd, zstd_chars};
 pub use decode::{decode, decode_bounded};
 pub use encode::encode;
 pub use error::{Code, Error, Result};

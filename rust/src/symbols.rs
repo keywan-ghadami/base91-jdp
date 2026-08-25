@@ -10,7 +10,7 @@
 //! little-endian path anywhere, which is the one thing a second implementation
 //! is most likely to get wrong.
 
-use crate::tables::{ALPHABET, PAIR_CHARS, SYMBOL_BITS};
+pub use crate::tables::{ALPHABET, PAIR_CHARS, SYMBOL_BITS};
 
 /// The encoder's pending bits: at most twelve, since a thirteenth would have
 /// become a symbol.

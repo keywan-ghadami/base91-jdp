@@ -115,6 +115,9 @@ pub mod tuning {
     }
 }
 pub const MAX_SEGMENT_BYTES: usize = 65_536;
+
+/// Bound on one `ZSTD` payload. Specification section 11.4.
+pub const MAX_FRAME_BYTES: usize = 16_777_216;
 pub const R_LEN: usize = 8;
 
 /// The R-Set, in the index order that fixes the bits of `mask`.

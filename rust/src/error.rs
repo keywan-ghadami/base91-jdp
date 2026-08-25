@@ -21,7 +21,7 @@ pub enum Code {
     InvalidRunValue,
     InvalidChain,
     MalformedPadding,
-    Unsupported,
+    MalformedFrame,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

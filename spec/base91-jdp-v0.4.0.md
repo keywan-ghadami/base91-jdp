@@ -9,7 +9,7 @@
 | Supersedes | 0.3.0 |
 
 > **Draft.** The wire format is complete and there is a prototype encoder and
-> decoder for all of it but the zstd class, in `rust/`. Section 17 is measured
+> decoder for all of it, class 20 included, in `rust/`. Section 17 is measured
 > against that prototype except where it says otherwise, and Section 17.3 and
 > the run break of Section 11.1 are both things the prototype found and the
 > arithmetic had missed. Thirteen of the forty-four segment classes are
@@ -695,6 +695,14 @@ builds the whole-input candidate — one or more `ZSTD` segments per Section 10.
 — computes its character count, and takes it only if it beats what the scan and
 block mode produce together.
 
+Building both is what makes this rule expensive. On the corpus the compressed
+path encodes at 120 to 415 MB/s and the same encoder weighing both candidates
+at 25 to 85, because the uncompressed candidate is the slow one -- it is the
+scan of Section 11.1 over data the scan has something to find in. An encoder
+told outright to compress MAY skip the comparison; one left to decide MUST
+make it, and Section 17.14 says what it costs and what it saves, which over
+the corpus is one part in thirty thousand.
+
 Since block mode is always a candidate and no other candidate is committed
 unless it is strictly shorter, **encoder output never exceeds block mode**:
 `2 × ⌈8L / 13⌉` characters, which is 1.2308 per byte plus at most two for the
@@ -1090,11 +1098,11 @@ corpus is fetched by `bench/corpus.py`; the projections below are produced by
 > **What is and is not measured.** Everything below is the prototype in `rust/`
 > encoding the corpus and decoding it again, except: Section 17.2, which is the
 > 0.3.0 JavaScript codec; the ratios in Section 9, which are arithmetic; and
-> the `ZSTD` class, which the prototype does not implement, so nothing here
-> covers compression at all. The donor profiles are still 0.3.0's and were
+> the packed classes, which neither corpus exercises. The donor profiles are
+> still 0.3.0's and were
 > derived for an R-Set that held `-` rather than NUL (Section 17.5). Neither
 > corpus contains a hex dump, a column of digits or a base64 blob, so nothing
-> here measures the packed classes either (Section 17.11).
+> here measures the packed classes either (Section 17.15).
 
 ### 17.1 Corpus
 
@@ -1302,6 +1310,12 @@ Every contender runs the same zstd frame; what differs is the container.
 | Silesia, level 3 | 0.41824 | 0.39205 | **0.38607** | 1.53 % |
 | Silesia, level 9 | 0.37270 | 0.34937 | **0.34403** | 1.53 % |
 
+Those were computed from the frame lengths before an implementation of
+Section 10 existed. There is one now, and it agrees: the prototype encodes the
+core corpus at level 3 to **0.34445** against the 0.34436 projected here, a
+difference of two parts in ten thousand, which is the length fields of the
+frames the projection counted slightly differently.
+
 The margin is the 1.56 % of the block coder, less what the segment framing
 costs, and it does not move with the level or the corpus because nothing in it
 depends on the data. base91-jdp is the smaller of the two on **all 25 files of
@@ -1391,30 +1405,6 @@ stop *that* skip are the R-Set members and the donors, which are the frequent
 characters of the text it runs on, so it settles two or three bytes per call
 where the dead-span probe settles thirty-two.
 
-### 17.11 What is left on the table
-
-* **UTF-8 above U+007F breaks passthrough.** A multi-byte character is not
-  representable, so prose in a language that uses accents runs through block mode
-  at 1.2308. `commonmark-spec.txt` and `requests-history.md` both pay for this.
-  A codepoint-level class would fix it and is the most valuable unassigned class
-  in Section 7.4.
-* **The packed classes are unmeasured.** Neither corpus contains a hex dump, a
-  column of digits or a base64 blob, which is exactly the shape those classes
-  are for. A short-record corpus — UUIDs, hashes, tokens, identifiers — is
-  required before any claim is made about them, and it must be assembled from
-  public or synthetic data.
-* **No speed claim is made against another implementation.** Base85N publishes C
-  throughput; this repository has JavaScript. A comparison needs a C
-  implementation of this format, and until there is one, size is the only axis
-  on which the two have been compared.
-* **A custom packed base**, carrying its alphabet explicitly rather than by
-  class, would cover restricted alphabets the table does not name. It costs
-  roughly `b` characters to declare, so it only pays on long segments.
-* **Layout-aware classes** — a UUID as 32 hex digits with the four hyphens
-  implied — would take a UUID from `w = 5` to `w = 4`, about 8 characters on 36.
-  That requires a normative statement about where the hyphens go, which is a
-  different kind of assumption from "these bytes are hex".
-
 ### 17.12 Not scanning, and what it is worth
 
 Section 11.5 lets an encoder decide that a stretch needs no scan. Measured in
@@ -1479,6 +1469,79 @@ eight times costs a further 9 %. Both are implemented and verified in the
 prototype and neither is used; `rust/src/simd.rs` says what a vector path would
 need instead, which is a fully vectorised digit conversion where nothing leaves
 the registers until the store.
+
+### 17.14 What compression costs in throughput
+
+The container encodes at gigabytes per second. zstd does not, at any level
+anyone would choose for size, and everything below follows from that.
+`countries.json`, 1 408 911 bytes:
+
+| level | chars/byte | whole encode | zstd alone | the container alone | decode |
+|---|---|---|---|---|---|
+| −5 | 0.2518 | 487 MB/s | 515 MB/s | 3 334 MB/s | 263 MB/s |
+| −1 | 0.1842 | 457 MB/s | 471 MB/s | 3 342 MB/s | 296 MB/s |
+| 1 | 0.1635 | 430 MB/s | 462 MB/s | 3 342 MB/s | 271 MB/s |
+| 3 | 0.1511 | 325 MB/s | 365 MB/s | 3 336 MB/s | 277 MB/s |
+| 9 | 0.1206 | 61 MB/s | 59 MB/s | 3 335 MB/s | 661 MB/s |
+| 15 | 0.1065 | 10 MB/s | 8 MB/s | 3 338 MB/s | 677 MB/s |
+| 19 | 0.0986 | 2 MB/s | 2 MB/s | 3 313 MB/s | 737 MB/s |
+
+**Read the third and fourth columns together: they are the same number.** At
+every level the whole encode runs at the compressor's speed, within the noise
+of this machine, and the container's own contribution is a constant that does
+not move — 3.3 GB/s from level −5 to level 19. Between the two there is a
+factor of six at the fastest level and sixteen hundred at the slowest.
+
+That is the shape of the control this format hands the caller. Choosing a level
+chooses a point on zstd's curve; the format adds a fixed 1.2308 characters per
+byte of frame to whatever comes out, and nothing else. **Any throughput claim
+about a compressing encoder is a claim about zstd**, and the container is not
+where the time goes.
+
+Decoding is not symmetric, and the asymmetry is zstd's too: decompression is
+roughly level-independent, so the high levels decode faster than the low ones
+only because there are fewer bytes to unpack before handing them over.
+
+Over the whole core corpus at level 3, with a frame per mebibyte
+(Section 17.9):
+
+| | ratio |
+|---|---|
+| no compressor | 0.97945 |
+| always compress | 0.34445 |
+| weighing both, Section 11.2 | 0.34444 |
+
+The last row is worth its own sentence, because it is the rule the
+specification states and it buys one part in thirty thousand. Compression wins
+on eleven of the thirteen files; the two it loses on are the JPEG and the PNG,
+where it loses by 0.0003 and 0.0016 characters per byte. It costs three to six
+times the throughput, because building the uncompressed candidate means running
+the scan of Section 11.1 over data the scan has plenty to find in: 331 MB/s
+becomes 26 on `countries.json`, 382 becomes 85 on `bootstrap.css`.
+
+### 17.15 What is left on the table
+
+* **UTF-8 above U+007F breaks passthrough.** A multi-byte character is not
+  representable, so prose in a language that uses accents runs through block mode
+  at 1.2308. `commonmark-spec.txt` and `requests-history.md` both pay for this.
+  A codepoint-level class would fix it and is the most valuable unassigned class
+  in Section 7.4.
+* **The packed classes are unmeasured.** Neither corpus contains a hex dump, a
+  column of digits or a base64 blob, which is exactly the shape those classes
+  are for. A short-record corpus — UUIDs, hashes, tokens, identifiers — is
+  required before any claim is made about them, and it must be assembled from
+  public or synthetic data.
+* **No speed claim is made against another implementation.** Base85N publishes C
+  throughput; this repository has JavaScript. A comparison needs a C
+  implementation of this format, and until there is one, size is the only axis
+  on which the two have been compared.
+* **A custom packed base**, carrying its alphabet explicitly rather than by
+  class, would cover restricted alphabets the table does not name. It costs
+  roughly `b` characters to declare, so it only pays on long segments.
+* **Layout-aware classes** — a UUID as 32 hex digits with the four hyphens
+  implied — would take a UUID from `w = 5` to `w = 4`, about 8 characters on 36.
+  That requires a normative statement about where the hyphens go, which is a
+  different kind of assumption from "these bytes are hex".
 
 ---
 
@@ -1664,5 +1727,5 @@ late. The measurement caveat at the head of Section 17 is a release blocker
 rather than a footnote: Sections 9, 10.2 and 10.3 carry projections rather than
 measurements, the donor profiles must be re-derived for the changed R-Set
 (Section 17.5), and neither corpus can say anything about the packed classes
-(Section 17.11). And no implementation has yet encoded a byte against this
+(Section 17.15). And no implementation has yet encoded a byte against this
 document, so every claim in it is an argument rather than a result.

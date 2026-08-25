@@ -253,3 +253,64 @@ fn simd_extract_matches_scalar() {
         }
     }
 }
+
+#[cfg(feature = "zstd")]
+mod compressed {
+    use base91_jdp::{decode, decode_bounded, encode_auto, encode_zstd, Code};
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
+
+    fn trip(data: &[u8], level: i32) {
+        let text = encode_zstd(data, level).unwrap();
+        assert_eq!(decode(&text).unwrap(), data, "{} bytes at level {level}", data.len());
+        let auto = encode_auto(data, level).unwrap();
+        assert_eq!(decode(&auto).unwrap(), data, "auto, {} bytes", data.len());
+        // Section 11.2: the compressed candidate is taken only when it wins.
+        assert!(auto.len() <= text.len());
+        assert!(auto.len() <= base91_jdp::encode(data).len());
+    }
+
+    #[test]
+    fn frames_round_trip_at_every_level() {
+        let mut rng = StdRng::seed_from_u64(11);
+        let text: Vec<u8> = std::iter::repeat(b"the quick brown fox jumps over the lazy dog. ")
+            .take(500)
+            .flatten()
+            .copied()
+            .collect();
+        let noise: Vec<u8> = (0..40_000).map(|_| rng.random()).collect();
+        for level in [-5, 1, 3, 9, 19] {
+            for data in [&text, &noise] {
+                trip(data, level);
+            }
+            for len in [0usize, 1, 13, 100, 5000] {
+                trip(&text[..len.min(text.len())], level);
+            }
+        }
+    }
+
+    #[test]
+    fn a_frame_is_carried_across_segments() {
+        // Longer than one frame's payload, so several ZSTD segments follow one
+        // another and the decoder has to resume block mode between them.
+        let big: Vec<u8> = (0..3_000_000u32).map(|i| (i / 977) as u8).collect();
+        let text = encode_zstd(&big, 3).unwrap();
+        assert_eq!(decode(&text).unwrap(), big);
+    }
+
+    #[test]
+    fn expansion_is_bounded_by_the_caller() {
+        // A megabyte of zeros is a few hundred characters. A decoder that
+        // allocates on the length field alone has already lost.
+        let bomb = encode_zstd(&vec![0u8; 1 << 20], 19).unwrap();
+        assert!(bomb.len() < 400, "{} characters", bomb.len());
+        assert_eq!(decode(&bomb).unwrap().len(), 1 << 20);
+        match decode_bounded(&bomb, 4096) {
+            Ok(v) => panic!("decoded {} bytes past the ceiling", v.len()),
+            Err(e) => assert!(
+                matches!(e.code, Code::InvalidLength | Code::MalformedFrame),
+                "{e}"
+            ),
+        }
+    }
+}

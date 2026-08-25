@@ -11,7 +11,7 @@
 //! what the comparison happens to produce, not an input to it.
 
 use crate::error::Result;
-use crate::symbols::*;
+pub use crate::symbols::*;
 use crate::tables::tuning;
 use crate::tables::*;
 

@@ -17,10 +17,22 @@ name = "base91_jdp"
 path = "src/lib.rs"
 
 [features]
+default = ["zstd"]
+
 # Off by default, and nightly-only: `std::simd` is unstable. The crate is
 # stable-only and portable without it, and the feature may only ever make the
 # same decisions faster -- see src/simd.rs.
 simd = []
+
+# Class 20, the compressed segment. On by default, because a decoder that
+# cannot read it is a different format in practice (specification section
+# 15.5) -- but separable, so the container can be built and measured without a
+# compression library in the way.
+zstd = ["dep:zstd"]
+
+[dependencies]
+# Class 20 only. The container needs nothing.
+zstd = { version = "0.13.3", optional = true }
 
 [dev-dependencies]
 rand = "0.9"

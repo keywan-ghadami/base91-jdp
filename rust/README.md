@@ -19,12 +19,13 @@ cargo +nightly test --features simd           # the same, with the vector paths 
 
 ## What it implements, and what it does not
 
-Passthrough with the eight-member R-Set and the donor profiles, the packed
-bases, the run classes and the chained-gap classes, the block coder under all
-of them, and a decoder for every one. **Class 20, the zstd segment, is not
-implemented** and is rejected on decode with `Code::Unsupported`: it needs a
-compression library, and none of the questions this prototype exists to answer
-are about zstd.
+Every class of the specification: passthrough with the eight-member R-Set and
+the donor profiles, the packed bases, the run and chained-gap classes, the
+compressed segment, and the block coder under all of them — with a decoder for
+each. Class 20 is behind the default `zstd` feature, which brings in the `zstd`
+crate; `--no-default-features` builds the container alone, and its decoder then
+refuses class 20 with `Code::UnknownClass`, as section 15.5 requires of an
+implementation that ships without it.
 
 ## What it found
 
@@ -126,6 +127,25 @@ shuffles and a variable shift measures 1 180 MB/s against the `u128` path's
 moving eight lanes out costs more than eight 128-bit shifts. It is implemented,
 verified against the scalar path on 20 000 random groups, and not used —
 `src/simd.rs` says what a vector path would need instead.
+
+**Compression is the throughput, and nothing else is.** The container encodes
+at 3.3 GB/s and does not move with the level; zstd goes from 515 MB/s at level
+−5 to 2 MB/s at 19, and the whole encoder tracks it within noise at every one:
+
+| level | chars/byte | whole encode | zstd alone | container alone |
+|---|---|---|---|---|
+| −5 | 0.2518 | 487 MB/s | 515 MB/s | 3 334 MB/s |
+| 1 | 0.1635 | 430 MB/s | 462 MB/s | 3 342 MB/s |
+| 3 | 0.1511 | 325 MB/s | 365 MB/s | 3 336 MB/s |
+| 9 | 0.1206 | 61 MB/s | 59 MB/s | 3 335 MB/s |
+| 19 | 0.0986 | 2 MB/s | 2 MB/s | 3 313 MB/s |
+
+Any throughput claim about a compressing encoder here is a claim about zstd.
+
+Section 11.2's rule — build both candidates, keep the shorter — costs three to
+six times the throughput and buys one part in thirty thousand over the corpus
+(0.34444 against 0.34445), because the *uncompressed* candidate is the slow one.
+`encode_zstd` skips the comparison; `encode_auto` makes it.
 
 ## A feature flag for more speed
 
