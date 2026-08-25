@@ -1298,24 +1298,36 @@ would produce and its margin over Base85N:
 | chained, `g ≤ 64` | 1.00061 (+0.6 %) | 1.02909 (+2.1 %) | 1.02824 (+2.06 %) |
 | chained, `g ≤ 8`, width in a field | 1.01595 (−0.9 %) | 1.04403 (+0.7 %) | 1.04319 (+0.63 %) |
 
-Three things follow, and each of them is a decision in Section 10.3.
+Three things follow from that table, and each is a decision in Section 10.3:
+chain rather than pair, because a class carrying exactly two runs and one gap
+swallows only every other boundary; put the width in the class rather than a
+field, because the field costs back one of the one or two characters the merged
+signal saved; and stop at eight, because sixty-four classes do not exist to be
+spent.
 
-**Chaining, not pairing.** A class carrying exactly two runs and one gap can
-only swallow every other boundary of an alternating sequence, which costs half
-the gain.
+**The implementation does not agree with the size of that gain.** Every figure
+above is a projection, computed before there was an encoder, and against a
+baseline that had no run break in Section 11.1 and a cruder passthrough. With
+those in place `ZRUN` already takes most of what the chained classes were
+credited with, and measured against the same encoder with the eight classes
+switched off:
 
-**The width belongs in the class.** The last row is the same design with a field
-naming the gap width instead of eight classes: the field costs a character back
-out of the one or two the merged signal saved, and two thirds of the gain with
-it.
+| | with the chained gaps | without | cost |
+|---|---|---|---|
+| core corpus, no compressor | 0.97831 | 0.98354 | +0.53 % |
+| Silesia, no compressor | 1.03635 | 1.03792 | +0.15 % |
+| short corpus | 0.9252 | 0.9252 | none |
+| any corpus, compression on | — | — | none, they are never reached |
 
-**Eight is where the curve is still cheap.** `g ≤ 64` is better again, but it
-would take 64 classes of the 44 that exist and would need the escape. Eight
-costs eight classes and reaches the widths the corpus actually has: in
-`_cffi_backend.so`, gaps of three are the mode.
+Not 1.56 % but 0.15 %, and on two files of twenty-five: `_cffi_backend.so` at
+3.27 % and `mozilla` at 0.70 %. On `mr` the encoder is *better* without them,
+which is the greedy ranking of Section 11.3 taking a worse path when offered a
+better local one.
 
-The `count` field of one character per segment is not modelled above and is
-charged against these numbers, not for them.
+Eight classes and the most involved grammar in this document, for that. It is
+recorded here rather than argued because the decision belongs to whoever reads
+it: Section 18.7 says why the design is the shape it is, and this says what the
+shape is worth.
 
 ### 17.8 With a compressor, on both sides
 
@@ -1687,9 +1699,24 @@ two different jobs. It is an argument that the format has three distinct
 mechanisms because it addresses three distinct shapes of input, and that a
 benchmark on one of them says nothing about the other two.
 
-Where the classes genuinely are dead weight is a long, compressible payload —
-and there they already cost nothing, because Section 11.5 skips the scan before
-any of them is reached.
+**On a long payload with compression on, no class is reached at all.** With the
+decision of Section 11.5 making the call, the core corpus goes 98.85 % through
+`ZSTD` and 1.15 % through block mode, and nothing else. Switching off the runs,
+the packed bases and passthrough — all of them, together — leaves the ratio at
+0.52273, unchanged in the fifth decimal, because none of them was ever invoked:
+
+| classes enabled | core, no compressor | core, compressing at −5 |
+|---|---|---|
+| all | 0.9783 | 0.52273 |
+| no runs | 1.1372 | 0.52273 |
+| no packed bases | 0.9784 | 0.52273 |
+| no passthrough | 1.0620 | 0.52273 |
+| block coder alone | 1.2308 | 0.52273 |
+
+So the class machinery earns its place in exactly two situations, and it is
+worth being plain about which: **a payload too short for a compressor to have a
+window**, and **a caller who cannot or will not link one**. For everything else
+it is unreachable code that costs nothing because it is never entered.
 
 ### 17.15 What is left on the table
 

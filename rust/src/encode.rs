@@ -363,8 +363,10 @@ fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
                 a: 0,
                 b: 0,
             });
-            if let Some(c) = scan_zmix(data, at, overhead) {
-                consider(c);
+            if families & tuning::F_ZMIX != 0 {
+                if let Some(c) = scan_zmix(data, at, overhead) {
+                    consider(c);
+                }
             }
         } else {
             consider(Candidate {

@@ -86,10 +86,12 @@ pub mod tuning {
     /// Which candidate families the scan considers. For the benchmark only:
     /// turning one off changes the encoding, so this is not a knob a caller
     /// has, only a way to find out where the time goes.
-    pub static FAMILIES: AtomicUsize = AtomicUsize::new(0b111);
+    pub static FAMILIES: AtomicUsize = AtomicUsize::new(0b1111);
     pub const F_RUN: usize = 1;
     pub const F_PACKED: usize = 2;
     pub const F_PT: usize = 4;
+    /// The chained-gap classes, separable from the plain runs.
+    pub const F_ZMIX: usize = 8;
 
     /// One bit per packed class, in class order from `DEC`. For the ablation
     /// benchmark: which of the thirteen are worth their table.
@@ -119,7 +121,7 @@ pub mod tuning {
         BINARY_RUN.store(super::MIN_BINARY_RUN, Relaxed);
         ZERO_RUN.store(super::MIN_RUN_IN_SEGMENT, Relaxed);
         NONZERO_RUN.store(super::MIN_NONZERO_RUN_IN_SEGMENT, Relaxed);
-        FAMILIES.store(0b111, Relaxed);
+        FAMILIES.store(0b1111, Relaxed);
         DETECT.store(1, Relaxed);
         PACKED_MASK.store(0x3FF, Relaxed);
     }

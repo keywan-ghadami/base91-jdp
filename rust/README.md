@@ -204,10 +204,13 @@ Taking each family away:
 | block coder alone | 1.2394 | 1.2308 |
 
 The runs carry the core corpus, the packed bases carry the short one and do
-nothing at all for the core, passthrough matters to both. Three mechanisms for
-three shapes of input — and on a long compressible payload they cost nothing
-anyway, because the decision of section 11.5 skips the scan before any of them
-is reached.
+nothing at all for the core, passthrough matters to both.
+
+**With compression on, none of them is reached.** The core corpus goes 98.85 %
+through `ZSTD` and 1.15 % through block mode, and switching off every class
+together leaves the ratio at 0.52273 either way. The machinery earns its place
+in two situations and no others: a payload too short for a compressor to have a
+window, and a caller who cannot or will not link one.
 
 What the ablation *did* remove is three classes: `DEC`, `ALPHA_U` and `ALNUM`,
 whose alphabets are contained in `HEXL`, `B32` and `B64` at the same width. A
