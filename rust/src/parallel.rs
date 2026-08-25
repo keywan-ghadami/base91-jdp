@@ -70,7 +70,7 @@ pub fn encode_with_chunk(data: &[u8], chunk: usize) -> String {
 }
 
 pub fn encode_with_chunk_stats(data: &[u8], chunk: usize) -> (String, ParallelStats) {
-    assert!(chunk > 0 && chunk % PARALLEL_ALIGN == 0, "chunks are whole symbol groups");
+    assert!(chunk > 0 && chunk.is_multiple_of(PARALLEL_ALIGN), "chunks are whole symbol groups");
     if data.is_empty() {
         return (String::new(), ParallelStats::default());
     }

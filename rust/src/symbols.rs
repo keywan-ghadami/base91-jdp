@@ -119,7 +119,7 @@ pub fn put_length(len: usize, out: &mut Vec<u8>) {
 /// whole symbols. Specification section 9.
 #[inline]
 pub fn packed_chars(len: usize, w: u32) -> usize {
-    2 * ((len * w as usize + 12) / 13)
+    2 * (len * w as usize).div_ceil(13)
 }
 
 // ---------------------------------------------------------------------------

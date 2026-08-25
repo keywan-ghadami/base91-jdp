@@ -81,9 +81,9 @@ field in a JSON document lives:
 | 55 samples under 200 bytes | 1.3709 | **0.9252** |
 
 Hex digests are 50 % smaller than Base64, decimal identifiers 47 %, UUIDs 37 %,
-protocol text 21 %. A zstd segment on the same samples costs 1.4040 — worse
-than Base64 — which is the measurement that says the classes are not redundant
-with compression.
+protocol text 21 %. Compressing these samples instead costs 1.2713 — worse than
+Base64 — which is the measurement that says the classes are not redundant with
+compression.
 
 ## The repository
 

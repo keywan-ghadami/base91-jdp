@@ -14,7 +14,7 @@
 //! What is accelerated:
 //!
 //! * [`run_end`] -- how far a run of one repeated byte reaches. The run
-//!   classes of specification section 10.2 are the measured win of 0.4.0, and
+//!   classes of specification section 10.3 are the measured win of 0.4.0, and
 //!   finding a run is a comparison against a splat.
 //! [`dead_span`] is the one that pays, and it pays where it matters most: a
 //! compressed payload has no runs, no packed alphabet and no passthrough, so

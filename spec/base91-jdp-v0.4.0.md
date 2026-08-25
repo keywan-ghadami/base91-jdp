@@ -374,10 +374,11 @@ Length zero is malformed.
 | 14 | `CROCK` | packed | 5 | Crockford, `0123456789ABCDEFGHJKMNPQRSTVWXYZ` |
 | 15 | `B64` | packed | 6 | RFC 4648 base64, `A`…`Z` `a`…`z` `0`…`9` `+` `/` |
 | 16 | `B64U` | packed | 6 | RFC 4648 base64url, `A`…`Z` `a`…`z` `0`…`9` `-` `_` |
-| 17 | `ZSTD` | block-packed | 8 | a zstd frame (Section 10) |
-| 18 | `ZRUN` | none | — | `L` zero bytes (Section 10.2) |
-| 19 | `RUN` | one pair | — | `L` copies of one byte (Section 10.2) |
-| 20 … 43 | — | reserved | | MUST be rejected with `UNKNOWN_CLASS` |
+| 17 | `ZSTD` | block-packed | 8 | a zstd frame (Section 10.1) |
+| 18 | `ZRUN` | none | — | `L` zero bytes (Section 10.3) |
+| 19 | `RUN` | one pair | — | `L` copies of one byte (Section 10.3) |
+| 20 | `ZBLK` | block-packed | 8 | one zstd block, headers dropped (Section 10.2) |
+| 21 … 43 | — | reserved | | MUST be rejected with `UNKNOWN_CLASS` |
 
 There is no class for decimal digits, for `A`…`Z` alone, or for the
 alphanumerics. Each of those alphabets is contained in another class's at the
@@ -544,11 +545,27 @@ compressor's output holds no run, no restricted alphabet and no representable
 text worth looking for. Section 17.12 measures what looking anyway costs, and
 it is a factor of fifteen.
 
-The frame is unmodified and self-delimiting. It carries its own magic number,
-its own window descriptor, optionally its own content size, and optionally its
-own XXH64 checksum. This format specifies none of that and adds no padding byte,
-no dictionary rule and no segment structure of its own — the length field of
-Section 7.3 gives the frame's length in bytes, and everything else is zstd's.
+The frame is self-delimiting and this format adds nothing to it: no padding
+byte, no dictionary rule and no segment structure of its own. The length field
+of Section 7.3 gives the frame's length in bytes, and everything else is
+zstd's.
+
+**A conforming frame is a plain zstd frame, and an encoder SHOULD emit the
+smallest one.** A zstd frame has four optional parts that a segment either
+already carries or that this format does not use, and RFC 8878 lets a
+compressor leave all four out:
+
+| Part | Bytes | Why it need not be there |
+|---|---|---|
+| magic number | 4 | The signal already named the class. The *magicless* frame format of RFC 8878 Section 3.1.1.1 omits it, and a decoder reads such a frame by selecting the same format. |
+| content size | 1 … 8 | A decoder MUST bound the decompressed size from the caller's ceiling in any case, so the field buys an allocation hint at a cost paid on every frame. |
+| content checksum | 4 | Section 2.3: this format makes no integrity claim, and a per-frame checksum is not where one would start. |
+| dictionary id | 1 … 4 | Dictionaries are out of scope, below. |
+
+A decoder MUST accept a frame with any of the four present and MUST accept one
+with none of them, so the choice is an encoder's alone. It is worth eleven
+bytes on a frame, which is nothing on a megabyte and 8 % of the encoding on a
+field-sized payload; Section 17.20 measures it.
 
 **The payload is exactly one frame.** A decoder MUST reject a payload with
 trailing bytes after the frame it decodes, and MUST reject a skippable frame,
@@ -576,7 +593,51 @@ length; the decompressed length must be bounded independently, from the frame's
 content-size field where present and by a caller-supplied ceiling where not,
 and that ceiling belongs on the total across all segments, not on each one.
 
-### 10.2 Runs
+### 10.2 A compressed payload without its header
+
+Class 20. The payload is **one zstd compressed block** [RFC8878 §3.1.1.2],
+packed at `w = 8` through the block coder, with no frame header and no block
+header in front of it.
+
+Section 10.1 takes a frame down to two header bytes. Those two, and the three
+of the block header that follows them, are the last thing a compressed segment
+says twice — and a segment carrying a single block already determines every
+field in them:
+
+| Field | Bytes | What determines it |
+|---|---|---|
+| frame header descriptor | 1 | Zero. Its four fields are the four Section 10.1 turned off. |
+| window descriptor | 1 | A single block decompresses to at most 128 KiB, so no match in it reaches further back than that. A decoder assumes a 128 KiB window, whatever window the encoder used. |
+| block header: last-block flag | ⅛ | Set. There is one block. |
+| block header: block type | ¼ | `Compressed_Block`. A raw or RLE block is not this class; see below. |
+| block header: block size | 2⅝ | The length field of Section 7.3, exactly. |
+
+A decoder reading class 20 therefore **reconstructs those five bytes** — `0x00`,
+`0x38`, then a three-byte little-endian block header of
+`1 | (2 << 1) | (L << 3)` where `L` is the length field — prepends them to the
+payload, and decodes the result as a magicless frame. Nothing else about class
+20 differs from class 17.
+
+**Class 20 is bounded at one block.** `MAX_BLOCK_BYTES` is 128 KiB, which is
+the largest block RFC 8878 allows. A decoder MUST reject a class 20 length
+field above it with `INVALID_LENGTH`, and an encoder MUST NOT emit one: a
+payload needing more than one block is class 17, whose frame keeps the history
+across its blocks.
+
+**Class 20 carries only a compressed block.** Where a compressor declines to
+compress and returns a raw or run-length block, an encoder MUST use class 17 —
+or, far more usefully, one of the classes that carries such input properly,
+which Section 11.2 will pick anyway.
+
+**Why both classes exist.** Class 20 cannot carry more than 128 KiB, and
+cutting a large input into 128 KiB pieces so that it could costs 1.9 % at level
+−5 and 4.7 % at levels 3 and 9 over the core corpus, because each piece then
+starts with an empty window. Five bytes are not worth four percent. Class 17 is
+for payloads that need more than one block; class 20 is for the ones that do
+not, which is exactly where five bytes are a measurable fraction of the
+encoding.
+
+### 10.3 Runs
 
 Class 18, `ZRUN`, has **no payload at all**: the class is the byte value, and
 the length field alone says how many zero bytes to emit. Three characters carry
@@ -634,7 +695,7 @@ that ended the scan was examined.
 
 **The run break.** A passthrough or packed prefix SHALL also stop at the first
 position `f` such that the `MIN_RUN_IN_SEGMENT` bytes at `f` are identical; the
-prefix ends at `f`, and the run is then carried by a class of Section 10.2 at
+prefix ends at `f`, and the run is then carried by a class of Section 10.3 at
 the next decision point. Without this the prefix scans are greedy and swallow
 the runs those classes exist for: passthrough carries a zero byte at one
 character each, since NUL is an R-Set member, where `ZRUN` carries eighty-nine
@@ -661,10 +722,12 @@ empty flush field; one that costs a character moves both by four to eight bytes.
 
 ### 11.2 Compression
 
-`ZSTD` is not part of the scan. An encoder that has been asked to compress
-builds the whole-input candidate — one or more `ZSTD` segments per Section 10.1
-— computes its character count, and takes it only if it beats what the scan and
-block mode produce together.
+`ZSTD` and `ZBLK` are not part of the scan. An encoder that has been asked to
+compress builds the whole-input candidate — one or more compressed segments per
+Sections 10.1 and 10.2 — computes its character count, and takes it only if it
+beats what the scan and block mode produce together. Which of the two classes
+carries a given piece is not a choice: Section 10.2 applies where the piece came
+out as one compressed block and Section 10.1 where it did not.
 
 Building both is what makes this rule expensive. On the corpus the compressed
 path encodes at 120 to 415 MB/s and the same encoder weighing both candidates
@@ -709,8 +772,9 @@ Section 15 treats as conforming.
 |---|---|---|
 | `SYMBOL_BITS` | 13 | Fixed; no fourteen-bit branch |
 | `MIN_RUN_IN_SEGMENT` | 8 | Shortest run that ends a passthrough or packed prefix (Sections 11.1, 17.3) |
-| `MAX_SEGMENT_BYTES` | 65 536 | Bound on every class but `ZSTD`; makes output canonical and encoder memory finite |
+| `MAX_SEGMENT_BYTES` | 65 536 | Bound on every class but `ZSTD` and `ZBLK`; makes output canonical and encoder memory finite |
 | `MAX_FRAME_BYTES` | 16 777 216 | Bound on one `ZSTD` payload (Section 10.1) |
+| `MAX_BLOCK_BYTES` | 131 072 | Bound on one `ZBLK` payload; the largest block RFC 8878 allows (Section 10.2) |
 | `NUM_PROFILES` | 4 | Donor profiles (Section 17.5) |
 | `R_LEN` | 8 | R-Set size, and the width of `mask` |
 | `PARALLEL_ALIGN` | 13 | Bytes per whole symbol group; a block-mode split here needs no seam (Section 14.5) |
@@ -844,12 +908,13 @@ if class == 0:  read one pair -> p ;  if p > 1023: error INVALID_PARAMS
 read the length field per Section 7.3       -> L
 if L == 0:  error INVALID_LENGTH
 if class == 17:  if L > MAX_FRAME_BYTES:    error INVALID_LENGTH
+elif class == 20: if L > MAX_BLOCK_BYTES:   error INVALID_LENGTH
 else:            if L > MAX_SEGMENT_BYTES:  error INVALID_LENGTH
 ```
 
 Then the payload: Section 8.4 for classes 0–6, Section 9 for 7–16, Section 10.1
-for 17, and Section 10.2 for 18 and 19. Block mode resumes immediately
-afterwards, with `b = n = 0`.
+for 17, Section 10.3 for 18 and 19, and Section 10.2 for 20. Block mode resumes
+immediately afterwards, with `b = n = 0`.
 
 ### 12.5 Conversion
 
@@ -1026,7 +1091,7 @@ walked once — can decode the pieces independently, and that is the only case.
 An encoder MAY implement any subset of the classes and remains conforming; its
 output is valid and merely larger. A **decoder MUST implement all of them**,
 because it cannot choose what it receives. An implementation that ships without
-zstd MUST reject class 17 with `UNKNOWN_CLASS` and MUST say so in its
+zstd MUST reject classes 17 and 20 with `UNKNOWN_CLASS` and MUST say so in its
 documentation — and it should be understood that this makes it a different
 format in practice, not a smaller one.
 
@@ -1037,10 +1102,15 @@ format in practice, not a smaller one.
 base91-jdp is an encoding, not a cryptographic transform, and it makes no
 integrity claim (Section 2.3). The decoder is the security-relevant surface.
 
-* **A compressed segment expands.** Sections 7.3 and 10.1 bound the input; the
-  output must be bounded by the caller. A stream of many small `ZSTD` segments
-  can multiply a modest input into an arbitrary one, so the ceiling belongs on
-  the total, not per segment.
+* **A compressed segment expands.** Sections 7.3, 10.1 and 10.2 bound the
+  input; the output must be bounded by the caller. A stream of many small
+  `ZSTD` or `ZBLK` segments can multiply a modest input into an arbitrary one,
+  so the ceiling belongs on the total, not per segment.
+* **A `ZBLK` payload is a block the decoder wraps a header around.** The header
+  is written from the length field and constants, so it is never adversarial,
+  but the block behind it is: a decoder MUST treat a reconstruction that fails
+  to decompress as `MALFORMED_FRAME` and MUST NOT retry with a different
+  window or block type in the hope of a decode.
 * **So does a run.** Nine characters emit 65 536 bytes, and a stream of them
   emits that many again each time. The same total ceiling covers this; a decoder
   that bounds only the compressed classes has missed the cheaper amplifier.
@@ -1123,7 +1193,7 @@ bits per pair, a 47.8 % branch rate against the 1.086 % of uniform data.
 
 This is the price of the eighty-nine free pair values, and there is no version of
 this format that pays less for them. It is also the cost the run classes of
-Section 10.2 exist to take back, since the files that pay it most are the files
+Section 10.3 exist to take back, since the files that pay it most are the files
 that are full of zeros.
 
 ### 17.3 The thresholds, re-swept
@@ -1186,7 +1256,7 @@ exist to carry; the run break of Section 11.1 is that finding, and it is worth
 Read across a row. 0.3.0, which has passthrough and the block coder and nothing
 else, is 8.9 % behind Base85N on the core corpus. The passthrough of Section 8
 with NUL admitted, the packed bases of Section 9 and the run classes of
-Section 10.2 put it **2.32 % ahead on the core corpus and 1.26 % ahead on
+Section 10.3 put it **2.32 % ahead on the core corpus and 1.26 % ahead on
 Silesia**, with no compressor on either side.
 
 Where the format stands on its own arithmetic rather than on a corpus: the block
@@ -1500,15 +1570,15 @@ Base64, which is what these fields are encoded with today:
 | base32 secrets | 96 | 1.3750 | **0.8542** | −37.9 % |
 | UUIDs, hex with separators | 145 | 1.3517 | **0.8483** | −37.2 % |
 | alphanumeric identifiers | 141 | 1.3901 | **1.0000** | −28.1 % |
-| base64 and base64url | 327 | 1.3579 | **1.0230** | −24.7 % |
-| protocol text | 840 | 1.3619 | **1.0750** | −21.1 % |
+| base64 and base64url | 327 | 1.3578 | **1.0214** | −24.8 % |
+| protocol text | 840 | 1.3619 | **1.0738** | −21.2 % |
 | **all of them** | **2 381** | **1.3709** | **0.9252** | **−32.5 %** |
 
 Every packed class of Section 7.4 is chosen by something: `HEXL` and `HEXU` by
 digests and account numbers, `HEXL_D` and `HEXU_D` by UUIDs, `B32` by a TOTP
 secret, `CROCK` by a ULID, `B64` and `B64U` by tokens, `ALPHA_L` by a slug.
-`ZRUN` takes thirty-two zero bytes in three characters, and `ZMIX` takes a
-zero-padded record at 0.438.
+`ZRUN` takes thirty-two zero bytes in three characters, and a zero-padded
+record comes to 0.422 on runs and block mode between them.
 
 Where the format does not win is where it should not: four bytes of digits stay
 in block mode because no packed class can pay for a signal there, and a name with
@@ -1601,17 +1671,19 @@ Over the 55 samples of the short group, none longer than 155 bytes:
 |---|---|
 | **base91-jdp, no compressor** | **0.9252** |
 | Base64 | 1.3709 |
-| zstd −5 in a segment | 1.5250 |
-| zstd 3 in a segment | 1.4040 |
-| zstd 19 in a segment | 1.3864 |
+| zstd −5 in a segment | 1.4217 |
+| zstd 3 in a segment | 1.2713 |
+| zstd 19 in a segment | 1.2470 |
 
-**Compression is worse than Base64 here, at every level**, and it is smaller
-than the plain encoding on two of the fifty-five. A twelve-byte name costs
-2.417 characters per byte through a frame; a sixteen-digit card number, which
-`HEXL` takes at 0.438, costs 1.562. An LZ77 compressor opening on a payload
-this short has an empty window and a frame header longer than the data, and no
-level changes that. Section 18.6 predicted this and the short group measures
-it.
+**Compressing everything is worse than Base64 here, at every level**, and it is
+smaller than the plain encoding on one of the fifty-five. A twelve-byte name
+costs 2.083 characters per byte through a compressed segment; a sixteen-digit
+card number, which `HEXL` takes at 0.438, costs 1.375. An LZ77 compressor
+opening on a payload this short has an empty window and a header a large
+fraction of the data, and no level changes that. Section 18.6 predicted this
+and the short group measures it. Section 17.20 took eleven bytes off that
+header, which is what moved these three rows down by roughly a tenth without
+moving the conclusion.
 
 What each family of classes is worth, taken away one at a time:
 
@@ -1690,7 +1762,7 @@ throughput together, on every path a mandatory compressor leaves:
 | path | with the runs | without `ZMIX` | without any run class |
 |---|---|---|---|
 | short, below the crossover | 0.9252 · 66 MB/s | 0.9252 · 68 MB/s | 0.9681 · 59 MB/s |
-| short, compressing where it wins | 0.9143 · 35 MB/s | 0.9143 · 33 MB/s | 0.9416 · 33 MB/s |
+| short, compressing where it wins | 0.9194 · 35 MB/s | 0.9194 · 33 MB/s | 0.9416 · 33 MB/s |
 | core, compressing at −5 | 0.5227 · 394 MB/s | 0.5227 · 395 MB/s | 0.5227 · 390 MB/s |
 | core, compressing at 3 | 0.3444 · 191 MB/s | 0.3444 · 189 MB/s | 0.3444 · 186 MB/s |
 | core, no compressor available | 0.9783 · 52 MB/s | 0.9835 · 51 MB/s | 1.1372 · 40 MB/s |
@@ -1709,15 +1781,18 @@ the payload:
 
 | payload | plain | zstd −5 | |
 |---|---|---|---|
-| 54 bytes of repeated JSON | 1.056 | 1.500 | plain |
-| 108 bytes | 1.046 | 0.861 | zstd |
-| 64-byte zero-padded record | 0.469 | 0.609 | plain |
-| 128 bytes of the same | 0.469 | 0.320 | zstd |
+| 54 bytes of repeated JSON | 1.056 | 1.426 | plain |
+| 108 bytes | 1.046 | 0.750 | zstd |
+| 32-byte zero-padded record | 0.469 | 0.844 | plain |
+| 64 bytes of the same | 0.469 | 0.453 | zstd |
 
-Compression starts winning somewhere around a hundred bytes, and beneath that
-the classes are not one option of two — they are the only thing there is. Even
-*with* compression applied wherever it wins, dropping the run classes costs
-3.0 % over the short corpus.
+Compression starts winning somewhere between fifty and a hundred bytes, and
+beneath that the classes are not one option of two — they are the only thing
+there is. Even *with* compression applied wherever it wins, dropping the run
+classes costs 3.0 % over the short corpus.
+
+These are the numbers after Section 17.20; before it the crossover sat at
+twice the length, and the run classes carried correspondingly more.
 
 **`ZMIX` could go, and has.** It cost 0.53 % on the core corpus and 0.15 % on Silesia
 without a compressor, nothing at all on the short corpus, and nothing anywhere
@@ -1729,11 +1804,69 @@ the record.
 
 Two faults were found while measuring this, and both were in the encoder rather
 than the format. `encode_smart` compressed payloads of any size, which put the
-short corpus at 1.5250 characters per byte — worse than Base64 — where building
-both candidates gives 0.9143; below a few kilobytes the comparison is cheap and
+short corpus at 1.4217 characters per byte — worse than Base64 — where building
+both candidates gives 0.9194; below a few kilobytes the comparison is cheap and
 the entropy sample is guessing, so it is made rather than skipped. And a fresh
 compression context was built per call, which on field-sized payloads is the
 entire cost: reusing one took the short corpus from 2 MB/s to 35.
+
+### 17.20 What the segment and the frame say twice
+
+A zstd frame arriving inside a typed segment repeats most of its own header,
+because the segment already carries the same facts. Eleven bytes come off a
+frame before anything about the compression changes, and on a field-sized
+payload eleven bytes are a tenth of the encoding.
+
+The ladder, in bytes of payload:
+
+| payload | input | stock frame | lean frame (10.1) | stripped block (10.2) |
+|---|---|---|---|---|
+| 55 short samples, level 3 | 2 381 | 2 580 | 2 360 | 2 280 |
+| 55 short samples, level −5 | 2 381 | 2 801 | 2 581 | 2 566 |
+| `bootstrap.css`, level 3 | 281 046 | 37 389 | 37 382 | 37 382 |
+| `countries.json`, level 3 | 1 408 911 | 170 218 | 170 211 | 170 211 |
+
+And in characters, counting the signal and length field around each payload,
+one segment per short sample:
+
+| payload | stock | lean | stripped | saved |
+|---|---|---|---|---|
+| the short group, level 3 | 3 403 | 3 129 | 3 027 | **11.05 %** |
+| `bootstrap.css` | 46 027 | 46 019 | 46 019 | 0.02 % |
+| `countries.json` | 209 509 | 209 501 | 209 501 | 0.00 % |
+
+Nothing at all on a megabyte, eleven percent on a protocol field. That is what
+a fixed per-frame cost looks like, and it is why it went unnoticed while the
+corpus was large files only.
+
+Only sixteen of the fifty-five short samples change at level 3. The rest are
+payloads zstd declines to compress, which come back as raw blocks and keep
+their frame — and which the encoder was not going to compress anyway.
+
+**Where the win actually lands is the crossover.** Compression on short
+payloads was losing to a header, not to the compressor:
+
+| payload | plain | zstd −5, before | after |
+|---|---|---|---|
+| 32 bytes of repeated JSON | 1.094 | 1.719 | 1.531 |
+| 108 bytes | 1.046 | 0.861 | 0.750 |
+| 432 bytes | 1.012 | 0.220 | 0.192 |
+| 32-byte zero-padded record | 0.469 | 1.156 | 0.844 |
+| 64 bytes of the same | 0.469 | 0.609 | **0.453** |
+
+The last row is the point: at 64 bytes compression now wins where before it
+lost, and the crossover on run-shaped data halves from 128 bytes to 64. Over
+the short corpus, an encoder that compresses where compression wins goes from
+0.9252 characters per byte to 0.9194 — the first time compression has improved
+that number at all.
+
+**What was not taken.** The length field of Section 7.3 is also redundant,
+since a frame delimits itself; dropping it was measured at three characters
+over fifty-five samples, against a decoder that could no longer find the end of
+a segment without invoking a decompressor. And the two frame-header bytes could
+come off a multi-block frame too, by pinning the window log so that a decoder
+knows it — worth two bytes on a payload of at least 128 KiB, which is not worth
+constraining the compressor for.
 
 ---
 
@@ -1890,8 +2023,9 @@ format.
 An earlier design let a decoder step over a class it did not implement and report
 the gap, so that new classes could be deployed without a flag day. It requires
 the core to know a segment's character count without knowing its class, which the
-length field cannot give — it is in bytes for most classes, gaps for `ZMIX`, and
-the bytes-to-characters ratio is the class's own business. Unknown classes are
+length field cannot give — it counts payload bytes for most classes and output
+bytes for `ZRUN` and `RUN`, which read no payload at all, and the
+bytes-to-characters ratio is the class's own business. Unknown classes are
 therefore a hard error (Section 15.5), which is at least honest: a decoder says
 what it cannot read rather than silently returning less than it was given.
 
@@ -1928,7 +2062,7 @@ classes of conformance surface is a real price to pay for it.
 * Joachim Henke, *basE91*, 2005. <http://base91.sourceforge.net/>
 * Keywan Ghadami, *Base85N v0.5.0*, 2026. <https://base85n.ghadami.de/> — the
   passthrough design, the R-Set and donor-profile mechanism, the fill mode that
-  Section 10.2 answers, and both benchmark corpora are taken from it.
+  Section 10.3 answers, and both benchmark corpora are taken from it.
 * RFC 8259, *The JavaScript Object Notation (JSON) Data Interchange Format*.
 * RFC 8878, *Zstandard Compression and the application/zstd Media Type*.
 * RFC 4648, *The Base16, Base32, and Base64 Data Encodings*.

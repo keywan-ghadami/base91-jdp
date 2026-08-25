@@ -16,8 +16,8 @@ use crate::tables::*;
 #[cfg(feature = "zstd")]
 use std::io::Read;
 
-/// The most a decoder reserves up front on a frame's own word about how big it
-/// will be. Past this the buffer grows as bytes actually arrive.
+/// The most a decoder reserves up front for a frame's plaintext. Past this the
+/// buffer grows as bytes actually arrive.
 #[cfg(feature = "zstd")]
 const RESERVE_CAP: usize = 1 << 26;
 
@@ -32,6 +32,7 @@ fn class_name(class: u16) -> &'static str {
         5 => "PT_SQL",
         6 => "PT_Z",
         CLASS_ZSTD => "ZSTD",
+        CLASS_ZBLK => "ZBLK",
         CLASS_ZRUN => "ZRUN",
         CLASS_RUN => "RUN",
         CLASS_PACKED_FIRST..=CLASS_PACKED_LAST => {
@@ -41,15 +42,14 @@ fn class_name(class: u16) -> &'static str {
     }
 }
 
-/// The content size a frame declares, where it declares one. A hint for the
-/// allocation, never a bound: the bound is the caller's.
+/// What to reserve for a frame's plaintext. A frame declares its content size
+/// only when an encoder pays for the field, and this one does not (see
+/// `compress::lean`), so the guess comes from the frame itself: four to one is
+/// a little under what the corpus averages, which is what a reserve wants. A
+/// hint for the allocation, never a bound -- the bound is the caller's.
 #[cfg(feature = "zstd")]
-fn frame_content_size(frame: &[u8]) -> usize {
-    zstd::zstd_safe::get_frame_content_size(frame)
-        .ok()
-        .flatten()
-        .and_then(|n| usize::try_from(n).ok())
-        .unwrap_or(0)
+fn frame_reserve(frame: &[u8]) -> usize {
+    frame.len().saturating_mul(4)
 }
 
 pub struct Decoder<'a> {
@@ -315,20 +315,33 @@ impl<'a> Decoder<'a> {
                     self.emit(out, b as u8)?;
                 }
             }
-            CLASS_ZSTD => {
+            CLASS_ZSTD | CLASS_ZBLK => {
                 #[cfg(not(feature = "zstd"))]
                 {
-                    return Err(self.err(Code::UnknownClass, "built without class 20"));
+                    return Err(self.err(Code::UnknownClass, "built without classes 17 and 20"));
                 }
                 #[cfg(feature = "zstd")]
                 {
                     let l = self.bounded_length(crate::tables::MAX_FRAME_BYTES)?;
-                    // The frame is read as bytes through the block coder, then
-                    // handed to zstd whole. Nothing about it is this format's
+                    // The payload is read as bytes through the block coder and
+                    // then handed to zstd. Nothing about it is this format's
                     // business -- not its length, which the field above gave,
-                    // and not its checksum.
-                    let mut frame = Vec::with_capacity(l);
-                    self.read_packed_bytes(l, &mut frame)?;
+                    // and not its checksum, which it does not have.
+                    let mut frame = Vec::with_capacity(l + 5);
+                    if class == CLASS_ZBLK {
+                        // Class 20 carries a bare block. The five bytes of
+                        // header that would precede it are all implied, so the
+                        // decoder writes them rather than reading them; see
+                        // `compress::strip` for each one.
+                        if l > crate::tables::MAX_BLOCK_BYTES {
+                            return Err(self.err(Code::InvalidLength, "above one block"));
+                        }
+                        let mut block = Vec::with_capacity(l);
+                        self.read_packed_bytes(l, &mut block)?;
+                        crate::compress::unstrip(&block, &mut frame);
+                    } else {
+                        self.read_packed_bytes(l, &mut frame)?;
+                    }
                     // Section 16: the expansion is attacker-controlled, so the
                     // ceiling has to bound what is *allocated* and not only
                     // what is kept. Handing the remaining budget to a one-shot
@@ -340,8 +353,15 @@ impl<'a> Decoder<'a> {
                     let limit = self.budget.saturating_sub(out.len());
                     let mut reader = zstd::stream::read::Decoder::new(&frame[..])
                         .map_err(|_| self.err(Code::MalformedFrame, "not a zstd frame"))?;
-                    let mut plain = Vec::new();
-                    plain.reserve(frame_content_size(&frame).min(limit).min(RESERVE_CAP));
+                    // The frame carries no magic number: the segment signal
+                    // already said what it is. See `compress::lean`.
+                    reader
+                        .set_parameter(zstd::zstd_safe::DParameter::Format(
+                            zstd::zstd_safe::FrameFormat::Magicless,
+                        ))
+                        .map_err(|_| self.err(Code::MalformedFrame, "magicless not supported"))?;
+                    let mut plain =
+                        Vec::with_capacity(frame_reserve(&frame).min(limit).min(RESERVE_CAP));
                     // One byte past the ceiling, so a frame that would exceed
                     // it is caught rather than truncated silently.
                     Read::take(&mut reader, limit as u64 + 1)
@@ -403,7 +423,7 @@ impl<'a> Decoder<'a> {
     /// it.
     #[cfg(feature = "zstd")]
     fn read_packed_bytes(&mut self, count: usize, into: &mut Vec<u8>) -> Result<()> {
-        let chars = 2 * ((count * 8 + 12) / 13);
+        let chars = 2 * (count * 8).div_ceil(13);
         if self.left() < chars {
             return Err(self.err(Code::UnexpectedEos, "a compressed payload"));
         }
@@ -427,7 +447,7 @@ impl<'a> Decoder<'a> {
     fn read_indices(&mut self, ci: usize, count: usize, out: &mut Vec<u8>) -> Result<()> {
         let w = PACKED[ci].w;
         let alphabet = PACKED[ci].chars;
-        let chars = 2 * ((count * w as usize + 12) / 13);
+        let chars = 2 * (count * w as usize).div_ceil(13);
         if self.left() < chars {
             return Err(self.err(Code::UnexpectedEos, "a packed payload"));
         }

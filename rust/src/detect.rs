@@ -56,13 +56,13 @@ const MAGIC: &[&[u8]] = &[
     &[0x89, b'P', b'N', b'G'],       // PNG
     &[b'P', b'K', 0x03, 0x04],       // zip
     &[0xFD, b'7', b'z', b'X', b'Z'], // xz
-    &[b'B', b'Z', b'h'],             // bzip2
+    b"BZh",                         // bzip2
     &[b'7', b'z', 0xBC, 0xAF],       // 7z
     &[0x04, 0x22, 0x4D, 0x18],       // LZ4 frame
-    &[b'G', b'I', b'F', b'8'],       // GIF
-    &[b'O', b'g', b'g', b'S'],       // Ogg
+    b"GIF8",                        // GIF
+    b"OggS",                        // Ogg
     &[0x1A, 0x45, 0xDF, 0xA3],       // Matroska / WebM
-    &[b'%', b'P', b'D', b'F'],       // PDF
+    b"%PDF",                        // PDF
 ];
 
 /// Whether the stream opens with a container whose contents are compressed.

@@ -39,7 +39,7 @@ fn serde_len(s: &str) -> usize {
 /// The block coder is the ceiling: no candidate is committed unless it is
 /// strictly shorter (specification section 11.2).
 fn assert_never_worse_than_block(data: &[u8], text: &str) {
-    let block = 2 * ((8 * data.len() + 12) / 13);
+    let block = 2 * (8 * data.len()).div_ceil(13);
     assert!(
         text.len() <= block + 2,
         "{} bytes encoded to {} characters, block mode would be {}",
@@ -130,8 +130,8 @@ fn packed_bases() {
     }
     // Every length where L*w does and does not land on a symbol boundary.
     for len in 1..80usize {
-        trip("0123456789".repeat(20)[..len].as_bytes());
-        trip("0123456789abcdef".repeat(20)[..len].as_bytes());
+        trip(&"0123456789".repeat(20).as_bytes()[..len]);
+        trip(&"0123456789abcdef".repeat(20).as_bytes()[..len]);
     }
 }
 
@@ -142,7 +142,7 @@ fn mixed_content_at_every_pending_bit_count() {
     for k in 0..13usize {
         let mut data: Vec<u8> = (0..k).map(|i| 0x80 | (i as u8)).collect();
         data.extend_from_slice(b"                                        ");
-        data.extend(std::iter::repeat(0u8).take(50));
+        data.extend(std::iter::repeat_n(0u8, 50));
         data.extend_from_slice(b"0123456789012345678901234567890123456789");
         data.extend((0..k).map(|i| 0x90 | (i as u8)));
         trip(&data);
@@ -156,7 +156,7 @@ fn parallel_is_identical_to_serial() {
     // Something with all of it: text, runs, hex, and high-entropy stretches.
     for round in 0..400 {
         data.extend_from_slice(b"the quick brown fox jumps over the lazy dog, ");
-        data.extend(std::iter::repeat(0u8).take(round % 37));
+        data.extend(std::iter::repeat_n(0u8, round % 37));
         data.extend_from_slice(b"deadbeefcafebabe");
         data.extend((0..(round % 29)).map(|_| rng.random::<u8>()));
     }
@@ -195,10 +195,6 @@ fn pair(v: u16) -> String {
     s.push(ALPHABET[(v % 91) as usize] as char);
     s.push(ALPHABET[(v / 91) as usize] as char);
     s
-}
-
-thread_local! {
-    static _UNUSED: () = ();
 }
 
 lazy_static_like!(PAIR_CLASS_31, pair(8192 + 2 * 31) + "AAAA");
@@ -261,8 +257,7 @@ mod compressed {
     #[test]
     fn frames_round_trip_at_every_level() {
         let mut rng = StdRng::seed_from_u64(11);
-        let text: Vec<u8> = std::iter::repeat(b"the quick brown fox jumps over the lazy dog. ")
-            .take(500)
+        let text: Vec<u8> = std::iter::repeat_n(b"the quick brown fox jumps over the lazy dog. ", 500)
             .flatten()
             .copied()
             .collect();
@@ -275,6 +270,70 @@ mod compressed {
                 trip(&text[..len.min(text.len())], level);
             }
         }
+    }
+
+    /// Section 10.2: a payload that fits in one block loses its frame header
+    /// and its block header, and a payload that does not keeps them. Both
+    /// forms have to come back, and the encoder has to choose between them by
+    /// the payload rather than by luck -- so this pins which class each size
+    /// lands in as well as that it round trips.
+    #[test]
+    fn a_single_block_payload_is_stripped_and_a_larger_one_is_not() {
+        let unit = b"the quick brown fox jumps over the lazy dog. ";
+        let classes = |text: &str| -> Vec<String> {
+            base91_jdp::explain(text)
+                .unwrap()
+                .into_iter()
+                .map(|(c, _)| c.to_string())
+                .collect()
+        };
+        for len in [200usize, 1000, 1 << 16, (1 << 17) - 1, 1 << 17, (1 << 17) + 1, 1 << 20] {
+            let data: Vec<u8> = unit.iter().cycle().take(len).copied().collect();
+            let text = encode_zstd(&data, 3).unwrap();
+            assert_eq!(decode(&text).unwrap(), data, "{len} bytes");
+            // Up to a block's worth of input, zstd emits one compressed block
+            // and the encoder strips it. Past that it cannot, and the frame
+            // stays whole.
+            let want = if len <= 1 << 17 { "ZBLK" } else { "ZSTD" };
+            assert!(classes(&text).iter().all(|c| c == want), "{len} bytes: {:?}", classes(&text));
+        }
+
+        // The other reason the frame stays: a payload zstd declines to
+        // compress comes back as a raw block, which the strip does not apply
+        // to. Fifty bytes of prose is such a payload.
+        let short = &unit[..37];
+        let text = encode_zstd(short, 3).unwrap();
+        assert_eq!(decode(&text).unwrap(), short);
+        assert_eq!(classes(&text), ["ZSTD"], "an uncompressed block was stripped");
+    }
+
+    /// A stripped payload is a bare block, so the decoder writes the five
+    /// bytes of header itself. Corrupt the block and it must refuse rather
+    /// than hand back whatever the reconstruction happened to produce.
+    #[test]
+    fn a_damaged_block_is_refused() {
+        let data: Vec<u8> = b"the quick brown fox jumps over the lazy dog. "
+            .iter()
+            .cycle()
+            .take(4000)
+            .copied()
+            .collect();
+        let text = encode_zstd(&data, 3).unwrap();
+        let good: Vec<char> = text.chars().collect();
+        let mut refused = 0;
+        // Every character of the payload in turn, moved one place in the
+        // alphabet. The length field and the signal are the first characters
+        // and are not the subject here, so start past them.
+        for i in 6..good.len() {
+            let mut bad: Vec<char> = good.clone();
+            bad[i] = if bad[i] == 'A' { 'B' } else { 'A' };
+            let s: String = bad.into_iter().collect();
+            match decode(&s) {
+                Ok(v) => assert_ne!(v, data, "a changed character decoded to the same bytes"),
+                Err(_) => refused += 1,
+            }
+        }
+        assert!(refused > 0, "no single-character change was refused");
     }
 
     #[test]

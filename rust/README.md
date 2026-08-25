@@ -188,10 +188,15 @@ corpus it produces byte-identical output to `encode_auto`'s build-both on all
 thirteen files at every level tried, at three to thirteen times the throughput.
 
 **Does zstd make the classes unnecessary?** No, and the short group says why.
-Over its 55 samples a compressed segment costs 1.4040 characters per byte at
+Over its 55 samples compressing everything costs 1.2713 characters per byte at
 level 3 — *worse than Base64* — against 0.9252 for the plain encoding, and it
-is smaller on two of the fifty-five. A twelve-byte name costs 2.417 through a
-frame. An LZ77 window that opens on 150 bytes is empty, and no level fixes it.
+is smaller on one of the fifty-five. A twelve-byte name costs 2.083 through a
+compressed segment. An LZ77 window that opens on 150 bytes is empty, and no
+level fixes it.
+
+That is with the eleven bytes of frame header the segment already implies taken
+off (see below). Before that it was 1.4040 and the conclusion was the same
+only louder.
 
 Taking each family away:
 
@@ -232,6 +237,40 @@ What the ablation *did* remove is three classes: `DEC`, `ALPHA_U` and `ALNUM`,
 whose alphabets are contained in `HEXL`, `B32` and `B64` at the same width. A
 subset at equal width can never produce a shorter segment, and dropping all
 three left both corpora unchanged to every digit reported.
+
+**What a segment and a frame say twice.** A zstd frame inside a typed segment
+repeats most of its own header: the magic number says what the signal said, the
+content-size field and the block header's size field say what the length field
+said, and the checksum answers a question this format does not ask. Eleven
+bytes come off before anything about the compression changes.
+
+`compress::lean` takes the first six — magicless frame format, no content size,
+no checksum, no dictionary id, all of them ordinary zstd settings.
+`compress::strip` takes the last five, on any payload that came out as a single
+compressed block, which is every payload up to 128 KiB: the two-byte frame
+header and the three-byte block header are then fully determined, so the
+segment goes out as class `ZBLK` and the decoder writes those five bytes rather
+than reading them. It reads a frame this process just produced, using only the
+stable frame format of RFC 8878 — not zstd's block API, which does the same
+thing more directly and which upstream has deprecated for removal.
+
+| | short group, level 3 | `countries.json` |
+|---|---|---|
+| stock frames | 3 403 chars | 209 509 chars |
+| lean frames | 3 129 | 209 501 |
+| stripped blocks | **3 027** | 209 501 |
+
+Nothing on a megabyte, 11 % on a protocol field. What it buys is the crossover:
+64 bytes of a zero-padded record now compress to 0.453 where they used to cost
+0.609 and lose to the plain encoding, and over the short corpus an encoder that
+compresses where compression wins goes from 0.9252 to **0.9194** — the first
+time compression has improved that number at all.
+
+The 128 KiB ceiling is why class 17 still exists. Cutting a large input into
+128 KiB pieces so that every segment could be stripped costs 1.9 % at level −5
+and 4.7 % at levels 3 and 9 on the core corpus, because each piece starts with
+an empty window. Five bytes are not worth four percent; `examples/onelblock.rs`
+is the measurement.
 
 ## A feature flag for more speed
 

@@ -257,7 +257,7 @@ pub fn encode_region_until(
                 if enc.record {
                     enc.segment_ends.push((i, enc.out.len()));
                 }
-                if let Some(k) = resync.binary_search_by_key(&i, |r| r.0).ok() {
+                if let Ok(k) = resync.binary_search_by_key(&i, |r| r.0) {
                     return (i, Some(k));
                 }
             }
@@ -499,14 +499,9 @@ fn scan_passthrough(data: &[u8], at: usize, overhead: usize) -> Option<Candidate
         };
         // The smallest profile that still has enough donors above every
         // literal already committed.
-        let mut viable = None;
-        for p in 0..NUM_PROFILES {
-            if new_min[p] >= new_k {
-                viable = Some(p);
-                break;
-            }
-        }
-        let Some(p) = viable else { break };
+        let Some(p) = new_min.iter().position(|&m| m >= new_k) else {
+            break;
+        };
         mask = new_mask;
         k = new_k;
         std::mem::swap(&mut min_rank, &mut new_min);
@@ -584,9 +579,9 @@ fn emit(enc: &mut Encoder, data: &[u8], at: usize, c: &Candidate) {
 pub fn donor_table(mask: u8, profile: usize) -> [u8; R_LEN] {
     let mut t = [0u8; R_LEN];
     let mut rank = 0usize;
-    for j in 0..R_LEN {
+    for (j, slot) in t.iter_mut().enumerate() {
         if mask & (1 << j) != 0 {
-            t[j] = PROFILES[profile][rank];
+            *slot = PROFILES[profile][rank];
             rank += 1;
         }
     }

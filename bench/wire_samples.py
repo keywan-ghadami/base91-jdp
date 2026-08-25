@@ -134,8 +134,14 @@ BINARY_SAMPLES: list[tuple[str, str, bytes]] = [
     ("random, 32 bytes", "binary",
      bytes.fromhex("c4a1908f7e6d5b3a2918074635f2e1d0"
                    "b9a8978665544332211f0e0d0c0b0a09")),
+    # Sixty-four bytes with no structure in them. It said `"5c3e..." * 8` for
+    # a while, which is an eight-byte cycle and compresses to nothing -- the
+    # opposite of what a sample called random is here to test.
     ("random, 64 bytes", "binary",
-     bytes.fromhex("5c3e7a1b9d0f2846" * 8)),
+     bytes.fromhex("2a5852cdeae1eeea827c60bdfb6f6ec5"
+                   "2e2ce59ac5b2c0dd58ad5bc4bf6d8716"
+                   "1ec8da5e6423dfd491b44ee3afe667b0"
+                   "e3b41ed45b9c6f4b33d11704a65109d5")),
     ("zero run, 32 bytes", "binary", bytes(32)),
     ("zero-padded record", "binary",
      b"ORD-184223" + bytes(22) + b"shipped" + bytes(25)),

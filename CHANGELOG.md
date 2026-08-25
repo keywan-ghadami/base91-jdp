@@ -8,6 +8,17 @@ became typed segments, LZ4 became zstd, and the Reed-Solomon layer went. A
 the other's output. The specification is `spec/base91-jdp-v0.4.0.md` and its
 Sections 18.1, 18.4 and 18.5 say why each thing went.
 
+A compressed segment carries as little of a zstd frame as the format can get
+away with. The magic number repeats what the segment signal said, the content
+size and the block header's size field repeat the length field, and the
+checksum answers a question Section 2.3 says this format does not ask — eleven
+bytes in all. Class 17 drops the first six by asking zstd for a magicless frame
+with no content size, checksum or dictionary id; the new class 20, `ZBLK`,
+drops the last five by carrying a bare compressed block on any payload that
+fits in one, which is everything up to 128 KiB. It is worth nothing on a
+megabyte and 11 % of the encoding on a protocol field, and it halves the length
+at which compression starts to pay. Specification Sections 10.1, 10.2 and 17.20.
+
 The reference implementation moved with it. v0.4.0 is implemented in
 `rust/`; the JavaScript package that implemented v0.3.0 is complete, tested and
 kept under `history/javascript-v0.3.0/`, where it is no longer published to npm

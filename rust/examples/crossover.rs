@@ -29,7 +29,7 @@ fn main() {
         let mut data = Vec::new();
         while data.len() < len {
             data.extend_from_slice(b"ORD-184223");
-            data.extend(std::iter::repeat(0u8).take(22));
+            data.extend(std::iter::repeat_n(0u8, 22));
         }
         data.truncate(len);
         let p = base91_jdp::encode(&data).len();

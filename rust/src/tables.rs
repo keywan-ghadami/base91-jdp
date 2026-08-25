@@ -128,6 +128,10 @@ pub const MAX_SEGMENT_BYTES: usize = 65_536;
 
 /// Bound on one `ZSTD` payload. Specification section 11.4.
 pub const MAX_FRAME_BYTES: usize = 16_777_216;
+
+/// Bound on one `ZBLK` payload: a zstd block cannot exceed 128 KiB, and a
+/// payload that claims to is not one. Specification section 10.2.
+pub const MAX_BLOCK_BYTES: usize = 128 * 1024;
 pub const R_LEN: usize = 8;
 
 /// The R-Set, in the index order that fixes the bits of `mask`.
@@ -154,7 +158,11 @@ pub const CLASS_PACKED_LAST: u16 = 16;
 pub const CLASS_ZSTD: u16 = 17;
 pub const CLASS_ZRUN: u16 = 18;
 pub const CLASS_RUN: u16 = 19;
-pub const CLASS_MAX_DEFINED: u16 = 19;
+/// A compressed segment whose payload is a bare zstd block, with the frame
+/// header and block header the segment already implies taken off. Section
+/// 10.2.
+pub const CLASS_ZBLK: u16 = 20;
+pub const CLASS_MAX_DEFINED: u16 = 20;
 
 /// The passthrough shorthands of classes 1..=6: the mask each one implies,
 /// all with profile 0. Index is `class - 1`.

@@ -32,7 +32,9 @@ zstd = ["dep:zstd"]
 
 [dependencies]
 # Class 20 only. The container needs nothing.
-zstd = { version = "0.13.3", optional = true }
+# `experimental` is what exposes the magicless frame format: the four magic
+# bytes repeat what the segment signal already said (specification section 10.1).
+zstd = { version = "0.13.3", optional = true, features = ["experimental"] }
 
 [dev-dependencies]
 rand = "0.9"
@@ -74,4 +76,15 @@ required-features = ["zstd"]
 [[example]]
 name = "norun"
 required-features = ["zstd"]
-
+[[example]]
+name = "merge"
+required-features = ["zstd"]
+[[example]]
+name = "strip"
+required-features = ["zstd"]
+[[example]]
+name = "onelblock"
+required-features = ["zstd"]
+[[example]]
+name = "shortnow"
+required-features = ["zstd"]
