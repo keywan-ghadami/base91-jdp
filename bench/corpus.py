@@ -37,8 +37,13 @@ assembled by somebody else, for somebody else's benchmark, and it
 contains input classes the core group has none of (a star catalogue, a
 medical image, a chemical database, a dictionary).
 
-Short protocol-field samples (names, numbers, phone numbers, ...) are
-authored directly in wire_samples.py and need no download.
+The *short* group is different in kind: 55 field-level samples under 200
+bytes each, authored directly in wire_samples.py and needing no download.
+They are here because neither of the other two groups contains a hex
+dump, a column of digits or a base64 blob -- which is exactly the shape
+the packed bases of the specification's section 9 exist for -- and
+because a fixed overhead of three characters is invisible at a megabyte
+and decisive at forty bytes.
 """
 
 from __future__ import annotations
@@ -54,6 +59,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 BENCH_DIR = Path(__file__).resolve().parent
+# wire_samples lives beside this file and is imported by name.
+sys.path.insert(0, str(BENCH_DIR))
 CACHE_DIR = BENCH_DIR / "corpus" / "_archives"
 CORPUS_DIR = BENCH_DIR / "corpus"
 
@@ -77,7 +84,7 @@ class Sample:
     archive: str  # Archive.key
     member: str  # path of the file inside the archive, or WHOLE_TAR
     origin: str  # human-readable provenance, shown in the report
-    group: str = "core"  # core | silesia
+    group: str = "core"  # core | silesia | short
     # Set when `member` is itself a zip holding exactly one file, which is
     # how the Silesia corpus is published: the name of that file.
     inner: str = ""
@@ -88,7 +95,7 @@ class Sample:
         return "" if self.group == "core" else self.group
 
 
-GROUPS = ("core", "silesia")
+GROUPS = ("core", "silesia", "short")
 
 
 # A sample that is the archive itself, decompressed: the tar stream inside a
@@ -395,11 +402,39 @@ def path_of(sample: Sample) -> Path:
         else CORPUS_DIR / sample.name
 
 
+def _ensure_short(quiet: bool = False) -> list[tuple[Sample, Path]]:
+    """The short group is authored rather than downloaded: wire_samples.py
+    writes one file per sample, so the Go reference harness and the Rust
+    prototype read it exactly the way they read the other two groups."""
+    import wire_samples
+
+    target = CORPUS_DIR / "short"
+    written = wire_samples.write_into(target)
+    if not quiet:
+        print(f"  wrote {len(written)} short samples", file=sys.stderr)
+    return [
+        (
+            Sample(
+                name=name,
+                category=cat,
+                archive="",
+                member="",
+                origin=f"authored in bench/wire_samples.py ({size} bytes)",
+                group="short",
+            ),
+            target / name,
+        )
+        for name, cat, size in written
+    ]
+
+
 def ensure_corpus(quiet: bool = False,
                   groups: tuple[str, ...] = GROUPS) -> list[tuple[Sample, Path]]:
     """Materialise the requested groups under bench/corpus/, return the paths."""
     out: list[tuple[Sample, Path]] = []
     archive_paths: dict[str, Path] = {}
+    if "short" in groups:
+        out += _ensure_short(quiet)
 
     for sample in SAMPLES:
         if sample.group not in groups:
@@ -435,6 +470,8 @@ def _cli() -> None:
         groups = ("core",)
     elif "--silesia" in args:
         groups = ("silesia",)
+    elif "--short" in args:
+        groups = ("short",)
     for sample, path in ensure_corpus(groups=groups):
         print(f"{path.stat().st_size:>10}  {sample.group:<7} {sample.category:<8} "
               f"{sample.name}")

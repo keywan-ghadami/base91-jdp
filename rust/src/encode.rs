@@ -286,24 +286,63 @@ pub fn block_only(data: &[u8]) -> String {
 // The candidate scan
 // ---------------------------------------------------------------------------
 
+/// What block mode really charges for `len` bytes from `n` pending bits, and
+/// what a segment covering the same bytes charges, both in thirteenths of a
+/// character so that they can be compared exactly.
+///
+/// The subtlety is the bits block mode leaves behind. It emits only whole
+/// symbols, so counting the characters it writes *understates* it: the
+/// remainder is input it has consumed and not yet paid for, and it will pay
+/// later. A segment leaves nothing pending, because Section 7.2 flushes.
+/// Comparing written characters against written characters therefore favours
+/// block mode by up to two characters, and on a short payload two characters
+/// is the whole decision -- six digits went to block mode at eight characters
+/// where `DEC` would have taken seven.
+///
+/// At the end of the input there is no "later", so the comparison is exact
+/// there: block mode pays its final group and the segment pays nothing.
+#[inline]
+fn weigh(seg_chars: usize, len: usize, n: u32, at_end: bool) -> (usize, usize) {
+    let bits = 8 * len as u64 + n as u64;
+    if at_end {
+        let whole = 2 * (bits / 13) as usize;
+        let block = whole + flush_chars((bits % 13) as u32);
+        (13 * seg_chars, 13 * block)
+    } else {
+        (13 * seg_chars, 2 * bits as usize)
+    }
+}
+
 /// The cheapest segment that can open at `at`, or none if block mode wins.
 fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
     let families = tuning::families();
     let overhead = 2 + flush_chars(n); // signal, flush
     let mut best: Option<Candidate> = None;
+    let total = data.len();
 
     let mut consider = |c: Candidate| {
-        let (blk, _) = block_cost(c.len, n);
-        if c.cost >= blk {
+        let (seg, blk) = weigh(c.cost, c.len, n, at + c.len == total);
+        if seg >= blk {
             return;
         }
-        // Cheapest first, then the lower class, then the longer prefix:
-        // canonicity rules 1, 2 and 3 of section 11.3.
+        // Ranked by what a candidate saves against block mode, then the lower
+        // class, then the longer prefix: canonicity rules 1, 2 and 3 of
+        // section 11.3.
+        //
+        // This is a greedy rule and it is not the best possible one. Ranking
+        // by saving *per byte consumed* instead was tried, on the argument
+        // that comparing candidates of different lengths by total saving
+        // favours the longer -- a JWT is three base64url runs separated by
+        // dots, passthrough reaches all of it and a packed base only the
+        // first run. It is worse: 0.98013 against 0.97831 on the core corpus
+        // and 0.9261 against 0.9252 on the short one, and the JWT itself goes
+        // from 1.032 to 1.039. Neither criterion dominates, which is what
+        // says the question is not the criterion but the greediness.
         let better = match &best {
             None => true,
             Some(b) => {
-                let (bblk, _) = block_cost(b.len, n);
-                let (gain, bgain) = (blk - c.cost, bblk - b.cost);
+                let (bseg, bblk) = weigh(b.cost, b.len, n, at + b.len == total);
+                let (gain, bgain) = (blk - seg, bblk - bseg);
                 (gain, b.class, c.len) > (bgain, c.class, b.len)
             }
         };

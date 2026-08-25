@@ -114,16 +114,6 @@ pub fn put_length(len: usize, out: &mut Vec<u8>) {
     }
 }
 
-/// Characters `len` bytes cost in block mode, given `n` pending bits, and the
-/// bits left over afterwards. Used by the candidate scan to compare like with
-/// like: a segment is only worth emitting against what block mode would have
-/// charged for the same bytes from the same state.
-#[inline]
-pub fn block_cost(len: usize, n: u32) -> (usize, u32) {
-    let bits = 8 * len as u64 + n as u64;
-    let symbols = bits / SYMBOL_BITS as u64;
-    (2 * symbols as usize, (bits % SYMBOL_BITS as u64) as u32)
-}
 
 /// Characters a payload of `len` bytes occupies at `w` bits each, padded to
 /// whole symbols. Specification section 9.

@@ -1120,9 +1120,18 @@ assembled by somebody else, for somebody else's benchmark, before this encoding
 existed, and it contains input classes the core group has none of — a star
 catalogue, two medical images, a chemical database, a dictionary.
 
+The **short** group is different in kind: 55 field-level samples under 200
+bytes each — identifiers, digests, tokens, timestamps, one record of JSON —
+authored in `bench/wire_samples.py` from invented values and needing no
+download. It exists because neither of the other two contains a hex dump, a
+column of digits or a base64 blob, which is exactly what Section 9 is for, and
+because three characters of segment overhead are invisible at a megabyte and
+decisive at forty bytes. Until it existed, thirteen of the format's classes had
+never been exercised by a benchmark at all.
+
 The donor profiles are derived on a separate 2.37 MB training corpus
-(`tools/traincorpus.py`) that shares no file and no upstream project with
-either group.
+(`tools/traincorpus.py`) that shares no file and no upstream project with any
+of the three.
 
 ### 17.2 What the fixed symbol costs
 
@@ -1193,9 +1202,9 @@ nothing else. `jdp 0.4.0` is the projection of Sections 8, 9 and 10.2.
 
 | | Base85N | jdp 0.3.0 | 0.4.0 projected | **0.4.0 measured** |
 |---|---|---|---|---|
-| core, 6.52 MB | 1.00698 | 1.09650 | 1.00464 | **0.97944** |
-| Silesia, 202 MiB | 1.05114 | 1.09861 | 1.03434 | **1.03606** |
-| both, 218 MB | 1.04982 | 1.09855 | 1.03345 | **1.03437** |
+| core, 6.52 MB | 1.00698 | 1.09650 | 1.00464 | **0.97831** |
+| Silesia, 202 MiB | 1.05114 | 1.09861 | 1.03434 | **1.03635** |
+| both, 218 MB | 1.04982 | 1.09855 | 1.03345 | **1.03462** |
 
 The last column is the prototype in `rust/`, encoding the corpus and decoding
 it again. The one before it is what this document projected before that
@@ -1209,8 +1218,8 @@ exist to carry; the run break of Section 11.1 is that finding, and it is worth
 Read across a row. 0.3.0, which has passthrough and the block coder and nothing
 else, is 8.9 % behind Base85N on the core corpus. The passthrough of Section 8
 with NUL admitted, the packed bases of Section 9 and the run classes of
-Sections 10.2 and 10.3 put it **2.73 % ahead on the core corpus, 1.43 % ahead
-on Silesia and 1.47 % ahead over both**, with no compressor on either side.
+Sections 10.2 and 10.3 put it **2.85 % ahead on the core corpus, 1.41 % ahead
+on Silesia and 1.45 % ahead over both**, with no compressor on either side.
 
 Where the format stands on its own arithmetic rather than on a corpus: the block
 coder is **1.2308 characters per byte against Base85N's 1.25**, 1.56 % denser,
@@ -1519,6 +1528,57 @@ times the throughput, because building the uncompressed candidate means running
 the scan of Section 11.1 over data the scan has plenty to find in: 331 MB/s
 becomes 26 on `countries.json`, 382 becomes 85 on `bootstrap.css`.
 
+### 17.16 Short payloads, and the classes only they reach
+
+Fifty-five field-level samples, 2 381 bytes in all, none over 155. Against
+Base64, which is what these fields are encoded with today:
+
+| what the sample is | bytes | Base64 | base91-jdp | |
+|---|---|---|---|---|
+| hex digests and keys | 408 | 1.3725 | **0.6838** | −50.2 % |
+| decimal identifiers | 130 | 1.4154 | **0.7462** | −47.3 % |
+| binary, runs included | 216 | 1.3889 | **0.8287** | −40.3 % |
+| Crockford base32 (ULIDs) | 78 | 1.3846 | **0.8462** | −38.9 % |
+| base32 secrets | 96 | 1.3750 | **0.8542** | −37.9 % |
+| UUIDs, hex with separators | 145 | 1.3517 | **0.8483** | −37.2 % |
+| alphanumeric identifiers | 141 | 1.3901 | **1.0000** | −28.1 % |
+| base64 and base64url | 327 | 1.3579 | **1.0230** | −24.7 % |
+| protocol text | 840 | 1.3619 | **1.0750** | −21.1 % |
+| **all of them** | **2 381** | **1.3709** | **0.9252** | **−32.5 %** |
+
+Every packed class of Section 7.4 is chosen by something: `DEC` by an account
+number, `HEXL` and `HEXU` by digests, `HEXL_D` and `HEXU_D` by UUIDs, `B32` by
+a TOTP secret, `CROCK` by a ULID, `B64` and `B64U` by tokens, `ALPHA_L` and
+`ALPHA_U` by slugs and codes. `ZRUN` takes thirty-two zero bytes in three
+characters, and `ZMIX` takes a zero-padded record at 0.438.
+
+Where the format does not win is where it should not: four bytes of digits stay
+in block mode because `DEC` cannot pay for a signal there, and a name with
+umlauts runs at 1.240 because a multi-byte character is not representable in
+passthrough (Section 17.15).
+
+**Two encoder faults were found by this group and by nothing else.**
+
+The first was in the comparison of Section 11.1. Block mode emits only whole
+symbols, so counting the characters it writes understates it — the remainder is
+input it has consumed and has not yet paid for. Comparing written characters
+against written characters favoured block mode by up to two characters, and on
+a short payload two characters is the whole decision: six digits went to block
+mode at eight characters where `DEC` takes seven. Weighing the deferred bits as
+well is worth 0.12 % on the core corpus too, where it had been invisible.
+
+The second is still open. The ranking of candidates is greedy, and it compares
+candidates of different lengths by what each saves in total, which favours the
+longer one — a JWT is three base64url runs separated by dots, passthrough
+reaches all of it and a packed base reaches only the first run, so the token
+goes to passthrough at 1.032 where three packed segments would be cheaper.
+Ranking by saving *per byte consumed* instead is worse, not better: 0.98013
+against 0.97831 on the core corpus, 0.9261 against 0.9252 here, and the JWT
+itself goes to 1.039. That neither criterion dominates is what says the problem
+is not the criterion but the greediness. Section 14.1 already observes that a
+short input can be classified exactly rather than heuristically, and this group
+is small enough to settle what that would be worth.
+
 ### 17.15 What is left on the table
 
 * **UTF-8 above U+007F breaks passthrough.** A multi-byte character is not
@@ -1526,11 +1586,15 @@ becomes 26 on `countries.json`, 382 becomes 85 on `bootstrap.css`.
   at 1.2308. `commonmark-spec.txt` and `requests-history.md` both pay for this.
   A codepoint-level class would fix it and is the most valuable unassigned class
   in Section 7.4.
-* **The packed classes are unmeasured.** Neither corpus contains a hex dump, a
-  column of digits or a base64 blob, which is exactly the shape those classes
-  are for. A short-record corpus — UUIDs, hashes, tokens, identifiers — is
-  required before any claim is made about them, and it must be assembled from
-  public or synthetic data.
+* **The greedy ranking is not optimal**, and Section 17.16 shows a case where
+  it costs: a JWT lands in passthrough where three packed segments would be
+  cheaper. An exact segmentation over the pending-bit state is affordable for
+  short inputs and nobody has measured what it would buy.
+* **The short group is authored, not collected.** Its samples are invented, and
+  chosen by someone who knew which classes existed — which is the right way to
+  exercise the classes and the wrong way to estimate how often they occur. What
+  fraction of real traffic is a hex digest is not a question this corpus can
+  answer.
 * **No speed claim is made against another implementation.** Base85N publishes C
   throughput; this repository has JavaScript. A comparison needs a C
   implementation of this format, and until there is one, size is the only axis

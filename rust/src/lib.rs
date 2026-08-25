@@ -47,7 +47,7 @@ pub mod bench {
 
 #[cfg(feature = "zstd")]
 pub use compress::{encode_auto, encode_zstd, zstd_chars};
-pub use decode::{decode, decode_bounded};
+pub use decode::{decode, decode_bounded, explain};
 pub use encode::encode;
 pub use error::{Code, Error, Result};
 pub use parallel::{

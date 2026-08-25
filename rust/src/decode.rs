@@ -21,6 +21,27 @@ use std::io::Read;
 #[cfg(feature = "zstd")]
 const RESERVE_CAP: usize = 1 << 26;
 
+/// The name of a class, for [`explain`].
+fn class_name(class: u16) -> &'static str {
+    match class {
+        CLASS_PT => "PT",
+        1 => "PT0",
+        2 => "PT_S",
+        3 => "PT_SL",
+        4 => "PT_SQ",
+        5 => "PT_SQL",
+        6 => "PT_Z",
+        CLASS_ZSTD => "ZSTD",
+        CLASS_ZRUN => "ZRUN",
+        CLASS_RUN => "RUN",
+        CLASS_PACKED_FIRST..=CLASS_PACKED_LAST => {
+            PACKED[(class - CLASS_PACKED_FIRST) as usize].name
+        }
+        CLASS_ZMIX_FIRST..=CLASS_ZMIX_LAST => "ZMIX",
+        _ => "?",
+    }
+}
+
 /// The content size a frame declares, where it declares one. A hint for the
 /// allocation, never a bound: the bound is the caller's.
 #[cfg(feature = "zstd")]
@@ -40,6 +61,8 @@ pub struct Decoder<'a> {
     n: u32,
     /// A ceiling on everything emitted, since runs and packed classes expand.
     budget: usize,
+    /// Set by [`explain`]: which class carried how many bytes.
+    trace: Option<Vec<(&'static str, usize)>>,
 }
 
 /// Whitespace is removed before decoding: none of the four is in the alphabet,
@@ -50,6 +73,27 @@ fn significant(text: &[u8]) -> Vec<u8> {
         .copied()
         .filter(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
         .collect()
+}
+
+/// Which classes a stream used, and how many input bytes each carried.
+///
+/// A benchmark that reports only a ratio cannot say whether a class fired at
+/// all, and the packed bases of section 9 are the ones most likely to be
+/// silently never chosen. This decodes and reports rather than guessing from
+/// the size.
+pub fn explain(text: &str) -> Result<Vec<(&'static str, usize)>> {
+    let raw = text.as_bytes();
+    let mut d = Decoder {
+        src: significant(raw),
+        raw,
+        at: 0,
+        bits: 0,
+        n: 0,
+        budget: usize::MAX / 4,
+        trace: Some(Vec::new()),
+    };
+    d.run()?;
+    Ok(d.trace.take().unwrap_or_default())
 }
 
 pub fn decode(text: &str) -> Result<Vec<u8>> {
@@ -65,6 +109,7 @@ pub fn decode_bounded(text: &str, budget: usize) -> Result<Vec<u8>> {
         bits: 0,
         n: 0,
         budget,
+        trace: None,
     };
     d.run()
 }
@@ -253,6 +298,7 @@ impl<'a> Decoder<'a> {
         self.bits = 0;
         self.n = 0;
 
+        let before = out.len();
         match class {
             CLASS_ZRUN => {
                 let l = self.bounded_length(MAX_SEGMENT_BYTES)?;
@@ -365,6 +411,9 @@ impl<'a> Decoder<'a> {
                     self.emit(out, byte)?;
                 }
             }
+        }
+        if let Some(t) = self.trace.as_mut() {
+            t.push((class_name(class), out.len() - before));
         }
         Ok(())
     }

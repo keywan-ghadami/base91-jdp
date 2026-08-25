@@ -50,7 +50,8 @@ from behind Base85N to ahead of it with no compressor on either side:
 
 | | Base85N | jdp 0.3.0 | 0.4.0 projected | **0.4.0, this crate** |
 |---|---|---|---|---|
-| core corpus, 6.52 MB | 1.00698 | 1.09650 | 1.00464 | **0.97944** |
+| core corpus, 6.52 MB | 1.00698 | 1.09650 | 1.00464 | **0.97831** |
+| Silesia, 202 MiB | 1.05114 | 1.09861 | 1.03434 | **1.03635** |
 
 **Parallel encoding works, and the obvious join does not.** Cutting the input
 at multiples of thirteen bytes lets each worker start with an empty accumulator
@@ -146,6 +147,26 @@ Section 11.2's rule — build both candidates, keep the shorter — costs three 
 six times the throughput and buys one part in thirty thousand over the corpus
 (0.34444 against 0.34445), because the *uncompressed* candidate is the slow one.
 `encode_zstd` skips the comparison; `encode_auto` makes it.
+
+**The short group found two more.** Fifty-five field-level samples under 200
+bytes, in `bench/wire_samples.py`, are the only benchmark that reaches the
+packed bases of section 9 at all — and the only one where three characters of
+segment overhead are visible. Against Base64: hex digests −50 %, decimal
+identifiers −47 %, UUIDs −37 %, tokens −25 %, protocol text −21 %, and −32.5 %
+over the group.
+
+The first fault: the candidate comparison counted only the characters block
+mode *writes*, and block mode emits whole symbols, so the remainder is input it
+has consumed and not yet paid for. Six digits went to block mode at eight
+characters where `DEC` takes seven. Weighing the deferred bits is worth 0.12 %
+on the core corpus too, where it had been invisible.
+
+The second is open. The ranking is greedy and compares candidates of different
+lengths by total saving, so a JWT — three base64url runs separated by dots —
+goes to passthrough at 1.032 where three packed segments would be cheaper.
+Ranking by saving per byte instead is *worse* on both corpora, which says the
+problem is the greediness rather than the criterion. An exact segmentation over
+the pending-bit state is affordable at these sizes and nobody has measured it.
 
 ## A feature flag for more speed
 
