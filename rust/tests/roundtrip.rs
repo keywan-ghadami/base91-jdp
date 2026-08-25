@@ -224,3 +224,14 @@ macro_rules! lazy_static_like {
         static $name: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| $e);
     };
 }
+
+#[test]
+fn the_reciprocal_divides_exactly() {
+    // The bulk block path replaces a division by 91 with a multiply and a
+    // shift. Every value a pair can hold is checked against the real division,
+    // because a derivation that is nearly right here is a codec that is nearly
+    // right everywhere.
+    for v in 0u32..=8280 {
+        assert_eq!(base91_jdp::bench::div91(v), v / 91, "div91({v})");
+    }
+}

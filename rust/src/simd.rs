@@ -52,6 +52,7 @@
 use std::simd::cmp::SimdPartialEq;
 use std::simd::u8x32;
 
+
 use crate::tables::{DONOR_RANK, NUM_PROFILES, R_INDEX, VALUE_OF};
 
 /// How many bytes one vector step settles.
@@ -192,66 +193,49 @@ impl SkipSet {
 // The dead span
 // ---------------------------------------------------------------------------
 
-/// How many positions from `at` can provably open no segment at all, so that
-/// the scan need not be run at any of them.
+/// One bit per position: could a segment open there at all.
 ///
 /// **This is where the vector work pays**, and it is the case a compressed
 /// payload is: no run, no packed class, no passthrough, so the scan of
 /// section 11.1 is entered once per byte and fails once per byte. Measured on
-/// high-entropy input, the block coder alone runs at 256 MB/s and the whole
-/// encoder at 36 -- seven eighths of the time is a scan that finds nothing.
+/// high-entropy input, the block coder alone runs at 534 MB/s and a scan at
+/// every position brings the encoder to 31.
 ///
-/// The test is three questions over thirty-two bytes, and it is deliberately
-/// conservative: a "yes" only ever means *scan here after all*.
+/// The mask is the union of three conditions, and it is deliberately weak in
+/// every one of them: a set bit only ever means *scan here after all*.
 ///
 /// * **A run needs two equal adjacent bytes.** `ZRUN` pays from two bytes up,
-///   so any repeat at all makes a position worth scanning.
-/// * **A packed base needs five bytes of one class** (four costs seven
-///   characters where block mode costs six). Runs of four bytes that are in
-///   *any* packed class are looked for instead, which is weaker and therefore
-///   safe.
-/// * **Passthrough needs ten carriable bytes** (nine ties, and a tie goes to
-///   block mode by canonicity rule 2). Runs of eight are looked for.
+///   so any repeat at all sets its position.
+/// * **A packed base needs five bytes of one class** -- four costs seven
+///   characters where block mode costs six. Runs of four bytes that are in
+///   *any* packed class are marked instead, which is weaker and so safe.
+/// * **Passthrough needs ten carriable bytes**; nine ties, and a tie goes to
+///   block mode by canonicity rule 2. Runs of eight are marked.
 ///
 /// A run of `k` set bits is found by folding the mask into itself: `m & m>>1`
 /// leaves the runs of two, and two more steps leave the runs of eight.
 ///
-/// Only `LANES - MARGIN` positions are returned, because a run that begins
-/// near the end of the window may continue past it and this function can see
-/// only what it loaded.
-pub fn dead_span(data: &[u8], at: usize) -> usize {
-    const MARGIN: usize = 10;
-    let mut end = at;
-    // Windows are walked as long as they stay dead, so a long stretch of
-    // compressed bytes costs one probe per thirty-two and pays the margin once
-    // rather than per window. Stopping at the first live window and backing off
-    // by the margin is what keeps the answer conservative: a run that begins
-    // inside the last window may continue past what was loaded.
-    while end + LANES + 1 <= data.len() {
-        if !window_is_dead(data, end) {
-            break;
-        }
-        end += LANES;
-    }
-    if end <= at + MARGIN {
-        return 0;
-    }
-    end - MARGIN - at
-}
+/// The top [`MARGIN`] bits are set unconditionally, because a run that begins
+/// there may continue past what was loaded and this function can only see its
+/// own window. The caller therefore advances by `LANES - MARGIN` per mask.
+///
+/// Returning a mask rather than a yes-or-no is what makes a window with one
+/// interesting position cost one probe and one scan, instead of one probe and
+/// thirty-two scans. On random bytes a quarter of windows hold something.
+pub const MARGIN: usize = 10;
 
 #[inline]
-fn window_is_dead(data: &[u8], at: usize) -> bool {
+pub fn candidate_mask(data: &[u8], at: usize) -> u32 {
+    debug_assert!(at + LANES + 1 <= data.len());
     let chunk = V::from_slice(&data[at..at + LANES]);
-    // One byte past the window is loaded too: a run that begins on the
-    // window's last byte has to be seen.
     let next = V::from_slice(&data[at + 1..at + 1 + LANES]);
-    if chunk.simd_eq(next).to_bitmask() != 0 {
-        return false;
-    }
-    if runs_of_8(membership(chunk, &CARRIABLE32)) != 0 {
-        return false;
-    }
-    runs_of_4(membership(chunk, &PACKED_ANY32)) == 0
+
+    let repeat = chunk.simd_eq(next).to_bitmask() as u32;
+    let carriable = runs_of_8(membership(chunk, &CARRIABLE32)) as u32;
+    let packed = runs_of_4(membership(chunk, &PACKED_ANY32)) as u32;
+
+    let margin = !0u32 << (LANES - MARGIN);
+    repeat | carriable | packed | margin
 }
 
 /// One bit per lane: is this byte in the set the nibble table describes.

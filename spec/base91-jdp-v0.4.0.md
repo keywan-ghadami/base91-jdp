@@ -534,6 +534,13 @@ scale stops at six and passthrough takes over.
 Class 20. The payload is a **zstd frame** [RFC8878], packed at `w = 8` through
 the block coder of Section 5.1.
 
+**A compressed payload is block mode and nothing else.** The bytes of a frame
+are packed at `w = 8` and an encoder MUST NOT run the candidate scan of
+Section 11.1 over them: it produced them, it knows they are compressed, and a
+compressor's output holds no run, no restricted alphabet and no representable
+text worth looking for. Section 17.12 measures what looking anyway costs, and
+it is a factor of fifteen.
+
 The frame is unmodified and self-delimiting. It carries its own magic number,
 its own window descriptor, optionally its own content size, and optionally its
 own XXH64 checksum. This format specifies none of that and adds no padding byte,
@@ -737,6 +744,42 @@ Section 15 treats as conforming.
 0.3.0 structure raised -- after passthrough had been broken, how many bytes must
 go through block mode before it may resume -- and with typed segments the answer
 is none: Section 17.3 measures every value and zero is the best of them.
+
+### 11.5 Deciding not to scan
+
+The scan of Section 11.1 is what encoding costs on data no class can carry. A
+reference implementation encoding high-entropy input spends five sixths of its
+time there, entering the scan once per byte and finding nothing once per byte:
+531 MB/s for the block coder alone against 31 for the encoder around it.
+
+An encoder MAY therefore decide, for a stretch of input, that no scan is worth
+running, and put the whole stretch through block mode. Two signals carry that
+decision, and Section 17.12 measures both:
+
+* **The stream opens with a magic number** whose format is already compressed —
+  a zstd frame, a gzip or zlib stream, a JPEG, a PNG, a zip. This is not a
+  guess.
+* **The entropy of a sample is high.** Above roughly 7.4 bits per byte nothing
+  the format offers can reach: passthrough needs ten consecutive representable
+  bytes and a packed base five of one alphabet, and at that entropy neither
+  occurs often enough to pay for looking. This is what catches a raw deflate
+  stream, which has no magic number at all.
+
+**A wrong decision costs size, never correctness**, and the cost is bounded:
+block mode is the ceiling of Section 11.2, so a false positive can do no worse
+than 1.2308 characters per byte on data that would have done better. That bound
+is what makes the decision safe to take on a guess.
+
+**It SHOULD be taken per window rather than once per stream.** A `tar`
+alternates text headers, compressed members and zero padding every few hundred
+bytes, and one decision at its head would be wrong for most of its length.
+Where an encoder aligns its windows to absolute offsets in the stream, the
+decision is a pure function of the bytes in the window and the parallel
+arrangement of Section 14.5 still produces byte-identical output.
+
+This is an encoder-side choice and it changes what is emitted, so an encoder
+that takes it does not satisfy Section 11.3 against one that does not. Like the
+class subsetting of Section 15.5, it MUST be documented rather than assumed.
 
 ---
 
@@ -1371,6 +1414,43 @@ where the dead-span probe settles thirty-two.
   implied — would take a UUID from `w = 5` to `w = 4`, about 8 characters on 36.
   That requires a normative statement about where the hyphens go, which is a
   different kind of assumption from "these bytes are hex".
+
+### 17.12 Not scanning, and what it is worth
+
+Section 11.5 lets an encoder decide that a stretch needs no scan. Measured in
+the prototype on four MB of high-entropy bytes:
+
+| | stable | with `simd` |
+|---|---|---|
+| encoder, deciding per window | **459 MB/s** | **470 MB/s** |
+| encoder, scanning everything | 32 MB/s | 122 MB/s |
+| block coder alone | 549 MB/s | 549 MB/s |
+
+Fourteen times, and it needs no vector unit: the decision is a byte histogram
+over four kilobytes per sixteen-kilobyte window. The vector mask of
+Section 17.10 is what carries the cases the decision does not fire on, and the
+two are complements rather than alternatives.
+
+What it does to real compressed payloads -- which is the case the format is for,
+since Section 10 puts a zstd frame inside a segment:
+
+| payload | windows called block | ratio, deciding | scanning | speed |
+|---|---|---|---|---|
+| `countries.json` at zstd −3 | 11 of 11 | 1.2308 | 1.2304 | 113 → 414 MB/s |
+| `lodash.js` at zstd −9 | 6 of 6 | 1.2308 | 1.2308 | 122 → 526 MB/s |
+| the source tar, gzipped | 8 of 9 | 1.2308 | 1.2307 | 118 → 521 MB/s |
+| `sql-wasm.wasm`, raw deflate | 20 of 20 | 1.2308 | 1.2308 | 118 → 485 MB/s |
+| `grace_hopper.jpg` | 4 of 4 | 1.2308 | 1.2294 | 112 → 534 MB/s |
+| `minduka_present.png` | 1 of 1 | 1.2308 | 1.2304 | 90 → 584 MB/s |
+
+Raw deflate is the row that justifies the entropy test on its own: it carries no
+magic number, and nothing but its entropy says what it is.
+
+And the false positives, over the whole core corpus: **none.** No window of any
+of the eleven files that are not already compressed was called block mode, and
+the corpus ratio moves from 0.97944 to 0.97945 — one part in a hundred thousand,
+which is the JPEG and the PNG giving up the 0.1 % their last few windows would
+have saved.
 
 ---
 

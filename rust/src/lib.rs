@@ -28,6 +28,7 @@ pub mod error;
 pub mod tables;
 
 mod decode;
+pub mod detect;
 mod encode;
 mod parallel;
 mod symbols;
@@ -39,6 +40,7 @@ pub mod simd;
 /// the format, and not a stable interface.
 pub mod bench {
     pub use crate::encode::block_only;
+    pub use crate::symbols::div91;
 }
 
 pub use decode::{decode, decode_bounded};

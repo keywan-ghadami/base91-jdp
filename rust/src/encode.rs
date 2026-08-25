@@ -184,28 +184,60 @@ pub fn encode_region_until(
     // was costing more than the scan it gates.
     let min_binary_run = tuning::binary_run();
     let mut i = start;
+    // The window whose verdict is in `block_window`, so the entropy of a
+    // window is computed once rather than per byte.
+    let mut verdict_for = usize::MAX;
+    let mut window_is_block = false;
     while i < commit_until {
+        // Decide per window whether anything is worth looking for at all.
+        // Aligned to absolute offsets so that a parallel worker and the
+        // sequential pass reach the same verdict for the same bytes.
+        if tuning::detect_enabled() {
+            let w = i / crate::detect::WINDOW;
+            if w != verdict_for {
+                verdict_for = w;
+                let from = w * crate::detect::WINDOW;
+                let to = (from + crate::detect::WINDOW).min(data.len());
+                window_is_block = crate::detect::is_block(&data[from..to], from == 0);
+            }
+            if window_is_block {
+                let end = (((i / crate::detect::WINDOW) + 1) * crate::detect::WINDOW)
+                    .min(commit_until);
+                block_bulk(&mut enc.acc, &mut enc.out, &data[i..end]);
+                enc.binary_run += end - i;
+                i = end;
+                continue;
+            }
+        }
         // Ask once for a whole window whether anything can start in it. On a
         // compressed payload the answer is always no, and the scan below --
         // which is five sixths of the encoder's time on such input -- is
         // skipped for twenty-two positions at a time.
+        // Ask once for a whole window which of its positions could open a
+        // segment at all, and put the rest straight through block mode. On a
+        // compressed payload the answer is "none of them", window after
+        // window, and the scan below -- five sixths of the encoder's time on
+        // such input -- is never entered.
         #[cfg(feature = "simd")]
-        // One scalar test before the vector one. Where the byte under the
-        // cursor is itself carriable, or repeats its neighbour, the window
-        // cannot be dead and the probe would load thirty-two bytes to say so.
-        // Structured binary -- a font, an object file -- is full of such
-        // positions, and without this guard the probe costs more there than it
-        // saves elsewhere.
-        if !PT_CARRIABLE[data[i] as usize]
-            && PACKED_MEMBERSHIP[data[i] as usize] == 0
-            && (i + 1 >= data.len() || data[i] != data[i + 1])
         {
-            let dead = crate::simd::dead_span(data, i);
-            if dead > 0 {
-                let end = (i + dead).min(commit_until);
-                for &b in &data[i..end] {
-                    enc.acc.push(b as u32, 8, &mut enc.out);
+            let step = crate::simd::LANES - crate::simd::MARGIN;
+            let margin = !0u32 << step;
+            let mut end = i;
+            // Windows are walked while they hold nothing, so a compressed
+            // stretch of any length is one bulk call rather than one per
+            // window. The walk stops at the first position a window does
+            // report, and the scan below takes it from there.
+            while end + crate::simd::LANES + 1 <= data.len() {
+                let live = crate::simd::candidate_mask(data, end) & !margin;
+                if live != 0 {
+                    end += live.trailing_zeros() as usize;
+                    break;
                 }
+                end += step;
+            }
+            let end = end.min(commit_until);
+            if end > i {
+                block_bulk(&mut enc.acc, &mut enc.out, &data[i..end]);
                 enc.binary_run += end - i;
                 i = end;
                 continue;
@@ -244,10 +276,8 @@ pub fn encode_region_until(
 /// class can carry anything, which is what a compressed payload looks like.
 pub fn block_only(data: &[u8]) -> String {
     let mut acc = Acc::new();
-    let mut out = Vec::with_capacity(data.len() * 2);
-    for &b in data {
-        acc.push(b as u32, 8, &mut out);
-    }
+    let mut out = Vec::with_capacity(2 * (8 * data.len() + 12) / 13 + 2);
+    block_bulk(&mut acc, &mut out, data);
     acc.finish(&mut out);
     unsafe { String::from_utf8_unchecked(out) }
 }

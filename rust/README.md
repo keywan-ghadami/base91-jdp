@@ -60,35 +60,60 @@ repair at the first segment boundary both paths reach gives 2 to 3.5× on four
 threads, with output byte-identical to a serial encode — asserted by the tests
 at four chunk sizes, down to a single symbol group.
 
-**The `simd` feature pays where compressed data is.** The candidate scan, not
-the packing, is what costs: on high-entropy input the block coder alone runs at
-323 MB/s and the whole encoder at 31, because the scan of section 11.1 is
-entered once per byte and finds nothing once per byte. One vector step answers
-"can anything start in the next thirty-two bytes" for the whole window, and
-windows are walked while they stay dead, so a long compressed stretch costs one
-probe per thirty-two bytes.
+**Scanning is what encoding costs, and on compressed data none of it is
+needed.** The block coder alone runs at 549 MB/s; the encoder around it, running
+the candidate scan of section 11.1 at every position and finding nothing at
+every position, managed 31.
+
+Two things fix it, and they are complements:
+
+*The per-window decision* (`src/detect.rs`) — a magic number, or a byte
+histogram over four kilobytes saying the entropy is above 7.4 bits. Then the
+whole window goes through block mode with no scan at all. It needs no vector
+unit and no nightly.
+
+*The vector candidate mask* (`src/simd.rs`) — one step per thirty-two bytes
+giving a bit per position: could anything open here. It carries the cases the
+decision does not fire on.
+
+| high-entropy input | stable | `--features simd` |
+|---|---|---|
+| deciding per window | **459 MB/s** | **470 MB/s** |
+| scanning everything | 32 MB/s | 122 MB/s |
+| block coder alone | 549 MB/s | 549 MB/s |
+
+On payloads that are actually compressed — the case section 10 puts a zstd
+frame into a segment for:
+
+| payload | speed | size cost |
+|---|---|---|
+| `countries.json` at zstd −3 | 113 → 414 MB/s | +0.03 % |
+| `lodash.js` at zstd −9 | 122 → 526 MB/s | none |
+| the source tar, gzipped | 118 → 521 MB/s | none |
+| `sql-wasm.wasm`, raw deflate | 118 → 485 MB/s | none |
+| `grace_hopper.jpg` | 112 → 534 MB/s | +0.11 % |
+
+Raw deflate carries no magic number and is caught by entropy alone, which is
+why both signals are there. Over the whole core corpus the decision fired on no
+window of any file that was not already compressed, and the ratio moved from
+0.97944 to 0.97945.
+
+Where the decision does not fire, the vector mask still pays, most on the files
+closest to incompressible:
 
 | input | stable | `--features simd` | |
 |---|---|---|---|
-| high-entropy synthetic | 31 MB/s | 64 MB/s | 2.06× |
-| grace_hopper.jpg | 32 MB/s | 62 MB/s | 1.94× |
+| grace_hopper.jpg, decision off | 32 MB/s | 62 MB/s | 1.94× |
 | sql-wasm.wasm | 36 MB/s | 62 MB/s | 1.72× |
-| minduka_present.png | 37 MB/s | 59 MB/s | 1.59× |
 | commonmark-spec.txt | 87 MB/s | 103 MB/s | 1.18× |
 | lodash.js | 82 MB/s | 93 MB/s | 1.13× |
-| DejaVuSans.ttf | 31 MB/s | 30 MB/s | 0.97× |
 
 The same probe applied to the *passthrough* prefix scan loses, in four
 arrangements, and `src/simd.rs` records each with its number. The two results
 are the same lesson from both sides: a vector probe pays when it settles many
-bytes per call, and "can anything start here" settles thirty-two of a
-compressed payload every time where "does this byte change the passthrough
-state" settles two or three of English text.
-
-A scalar guard in front of the probe is what removes the regression on
-structured binary: where the byte under the cursor is itself carriable or
-repeats its neighbour, the window cannot be dead and loading it to find that
-out is waste. Without the guard `DejaVuSans.ttf` ran at 0.84×.
+bytes per call. "Can anything start here" settles thirty-two bytes of a
+compressed payload every time; "does this byte change the passthrough state"
+settles two or three of English text.
 
 ## A feature flag for more speed
 

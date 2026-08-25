@@ -72,6 +72,15 @@ pub mod tuning {
     pub const F_PACKED: usize = 2;
     pub const F_PT: usize = 4;
 
+    /// Whether the encoder takes the per-window block-mode decision at all.
+    /// On by default; the benchmark turns it off to price it.
+    pub static DETECT: AtomicUsize = AtomicUsize::new(1);
+
+    #[inline]
+    pub fn detect_enabled() -> bool {
+        DETECT.load(Relaxed) != 0
+    }
+
     #[inline]
     pub fn families() -> usize {
         FAMILIES.load(Relaxed)
@@ -83,6 +92,7 @@ pub mod tuning {
         ZERO_RUN.store(super::MIN_RUN_IN_SEGMENT, Relaxed);
         NONZERO_RUN.store(super::MIN_NONZERO_RUN_IN_SEGMENT, Relaxed);
         FAMILIES.store(0b111, Relaxed);
+        DETECT.store(1, Relaxed);
     }
 }
 pub const MAX_SEGMENT_BYTES: usize = 65_536;

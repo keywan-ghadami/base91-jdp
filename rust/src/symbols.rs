@@ -45,6 +45,13 @@ impl Acc {
         self.bits
     }
 
+    /// Restore an accumulator saved by a bulk pass.
+    #[inline]
+    pub fn set(&mut self, bits: u32, n: u32) {
+        self.bits = bits;
+        self.n = n;
+    }
+
     #[inline]
     pub fn reset(&mut self) {
         self.bits = 0;
@@ -123,4 +130,76 @@ pub fn block_cost(len: usize, n: u32) -> (usize, u32) {
 #[inline]
 pub fn packed_chars(len: usize, w: u32) -> usize {
     2 * ((len * w as usize + 12) / 13)
+}
+
+// ---------------------------------------------------------------------------
+// Bulk block mode
+// ---------------------------------------------------------------------------
+
+/// `v / 91` for `v <= 8280`, as a multiply and a shift.
+///
+/// The block coder divides by 91 twice per pair, which is twice per thirteen
+/// bits, and a hardware divide is twenty-odd cycles. `11523 = ceil(2^20 / 91)`
+/// makes it a multiply and a shift; `tests` checks all 8 281 values against the
+/// real division rather than trusting the derivation.
+#[inline(always)]
+pub fn div91(v: u32) -> u32 {
+    (v * 11523) >> 20
+}
+
+/// Push a stretch of bytes through block mode with nothing else in the way.
+///
+/// This is the same arithmetic as [`Acc::push`], written so that the
+/// accumulator and the output cursor are locals rather than fields reached
+/// through a borrow. That alone is most of the difference between 93 MB/s and
+/// 300: the per-byte path in the encoder cannot keep either in a register
+/// while a `&mut Encoder` is live across the loop.
+///
+/// Thirteen bytes are exactly eight symbols, so a whole group is taken at once
+/// where one is available and the accumulator is empty -- one `u128` load, no
+/// carry, no branch per byte.
+pub fn block_bulk(acc: &mut Acc, out: &mut Vec<u8>, data: &[u8]) {
+    let mut bits = acc.pending() as u64;
+    let mut n = acc.n;
+    let mut i = 0usize;
+
+    // Get to a group boundary first: whatever the accumulator already owes.
+    while i < data.len() && n != 0 {
+        bits = (bits << 8) | data[i] as u64;
+        n += 8;
+        while n >= SYMBOL_BITS {
+            n -= SYMBOL_BITS;
+            put_pair(((bits >> n) & 8191) as u16, out);
+        }
+        bits &= (1u64 << n) - 1;
+        i += 1;
+    }
+
+    // Then thirteen bytes at a time, which is eight symbols and no remainder.
+    while i + 13 <= data.len() {
+        let mut g: u128 = 0;
+        for k in 0..13 {
+            g = (g << 8) | data[i + k] as u128;
+        }
+        for k in (0..8).rev() {
+            let v = ((g >> (13 * k)) & 8191) as u32;
+            let d1 = div91(v);
+            out.push(ALPHABET[(v - 91 * d1) as usize]);
+            out.push(ALPHABET[d1 as usize]);
+        }
+        i += 13;
+    }
+
+    // And the tail.
+    while i < data.len() {
+        bits = (bits << 8) | data[i] as u64;
+        n += 8;
+        while n >= SYMBOL_BITS {
+            n -= SYMBOL_BITS;
+            put_pair(((bits >> n) & 8191) as u16, out);
+        }
+        bits &= (1u64 << n) - 1;
+        i += 1;
+    }
+    acc.set(bits as u32, n);
 }

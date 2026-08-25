@@ -1,6 +1,7 @@
 //! Where the time goes on data no class can carry -- which is what a
-//! compressed payload is. Turning a candidate family off changes the
-//! encoding, so these rows are a profile, not alternatives.
+//! compressed payload is -- and what the per-window block-mode decision of
+//! `detect` is worth. Turning a candidate family off changes the encoding, so
+//! those rows are a profile, not alternatives.
 
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
@@ -27,18 +28,21 @@ fn main() {
             (x >> 24) as u8
         })
         .collect();
+    println!("entropy of the sample: {:.3} bits/byte\n", base91_jdp::detect::entropy(&data));
 
     println!("| what | rate |");
     println!("|---|---|");
     rate("whole encoder", &data, || {
         std::hint::black_box(base91_jdp::encode(&data).len());
     });
+    tuning::DETECT.store(0, Relaxed);
+    rate("without the window decision", &data, || {
+        std::hint::black_box(base91_jdp::encode(&data).len());
+    });
     for (label, mask) in [
-        ("without passthrough", tuning::F_RUN | tuning::F_PACKED),
-        ("without packed bases", tuning::F_RUN | tuning::F_PT),
-        ("without runs", tuning::F_PACKED | tuning::F_PT),
-        ("runs only", tuning::F_RUN),
-        ("no scan at all", 0),
+        ("... and without passthrough", tuning::F_RUN | tuning::F_PACKED),
+        ("... and without packed bases", tuning::F_RUN | tuning::F_PT),
+        ("... and no scan at all", 0),
     ] {
         tuning::FAMILIES.store(mask, Relaxed);
         rate(label, &data, || {
