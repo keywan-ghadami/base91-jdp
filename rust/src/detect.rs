@@ -33,7 +33,12 @@
 pub const WINDOW: usize = 1 << 14;
 
 /// Bytes sampled from a window to estimate its entropy.
-pub const SAMPLE: usize = 4096;
+///
+/// A thousand samples over 256 buckets underestimates a uniform distribution
+/// by about 0.18 bits, which the threshold has room for: real text sits near
+/// 4.5 and a compressed stream near 7.9, so the two populations are three bits
+/// apart and the sample only has to tell them apart.
+pub const SAMPLE: usize = 1024;
 
 /// Above this, the window is taken to be incompressible. Section 17.12
 /// measures the corpus against it; the gap between the two populations is

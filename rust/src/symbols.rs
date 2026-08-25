@@ -10,7 +10,7 @@
 //! little-endian path anywhere, which is the one thing a second implementation
 //! is most likely to get wrong.
 
-use crate::tables::{ALPHABET, SYMBOL_BITS};
+use crate::tables::{ALPHABET, PAIR_CHARS, SYMBOL_BITS};
 
 /// The encoder's pending bits: at most twelve, since a thirteenth would have
 /// become a symbol.
@@ -175,19 +175,43 @@ pub fn block_bulk(acc: &mut Acc, out: &mut Vec<u8>, data: &[u8]) {
         i += 1;
     }
 
-    // Then thirteen bytes at a time, which is eight symbols and no remainder.
-    while i + 13 <= data.len() {
-        let mut g: u128 = 0;
-        for k in 0..13 {
-            g = (g << 8) | data[i + k] as u128;
+    // Then whole groups. Sixteen bytes are loaded to reach thirteen, so the
+    // group loop stops three bytes early and the tail below finishes.
+    if i + 16 <= data.len() {
+        let groups = (data.len() - i - 3) / 13;
+        out.reserve(16 * groups);
+        let mut dst = out.len();
+        // The buffer has room for every character this loop writes, so the
+        // writes go through a pointer rather than sixteen capacity checks per
+        // group. `dst` is advanced only by what was written, and `set_len` is
+        // called once, after the loop.
+        let base = out.as_mut_ptr();
+        for _ in 0..groups {
+            // One big-endian load. The thirteen bytes of the group are the top
+            // 104 bits of it, so symbol k is a shift and a mask -- where an
+            // earlier version of this built the same value with thirteen
+            // shift-ors, which cost more than the eight extractions did.
+            // One big-endian load. The thirteen bytes of the group are the
+            // top 104 bits of it, so each symbol is a shift and a mask.
+            //
+            // Two things that look like improvements are not, and both were
+            // measured: extracting the eight symbols with a vector shuffle
+            // (crate::simd::extract_group) costs 2.6x, because the symbols
+            // have to leave the vector registers again for the table lookup;
+            // and assembling the sixteen characters into one u128 to store
+            // once costs 9 %, because the assembly is more work than the seven
+            // stores it saves.
+            let g = u128::from_be_bytes(data[i..i + 16].try_into().unwrap());
+            for k in 0..8u32 {
+                let v = ((g >> (115 - 13 * k)) & 8191) as usize;
+                unsafe {
+                    base.add(dst).cast::<u16>().write_unaligned(PAIR_CHARS[v]);
+                }
+                dst += 2;
+            }
+            i += 13;
         }
-        for k in (0..8).rev() {
-            let v = ((g >> (13 * k)) & 8191) as u32;
-            let d1 = div91(v);
-            out.push(ALPHABET[(v - 91 * d1) as usize]);
-            out.push(ALPHABET[d1 as usize]);
-        }
-        i += 13;
+        unsafe { out.set_len(dst) };
     }
 
     // And the tail.

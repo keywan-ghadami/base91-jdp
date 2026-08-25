@@ -235,3 +235,21 @@ fn the_reciprocal_divides_exactly() {
         assert_eq!(base91_jdp::bench::div91(v), v / 91, "div91({v})");
     }
 }
+
+#[cfg(feature = "simd")]
+#[test]
+fn simd_extract_matches_scalar() {
+    // The vector path lays out thirteen bytes as eight thirteen-bit fields.
+    // A layout that is nearly right produces a codec that is nearly right, so
+    // every lane is checked against the u128 arithmetic on random groups.
+    let mut rng = StdRng::seed_from_u64(0xB10C);
+    for _ in 0..20_000 {
+        let g: [u8; 16] = rng.random();
+        let got = base91_jdp::simd::extract_group(&g);
+        let whole = u128::from_be_bytes(g);
+        for k in 0..8u32 {
+            let want = ((whole >> (115 - 13 * k)) & 8191) as u32;
+            assert_eq!(got[k as usize], want, "lane {k} of {g:?}");
+        }
+    }
+}

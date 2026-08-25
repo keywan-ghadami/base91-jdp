@@ -20,6 +20,25 @@ pub static VALUE_OF: [u8; 256] = {
     t
 };
 
+/// Both characters of a pair value, packed low digit first.
+///
+/// Sixteen kilobytes, which is half a typical L1 data cache, and it removes
+/// the two divisions by 91 the block coder would otherwise do per pair --
+/// along with the multiply-shift reciprocal that replaced them and the two
+/// alphabet lookups after that. One aligned 16-bit load and one 16-bit store
+/// per symbol is the whole of digit conversion.
+pub static PAIR_CHARS: [u16; 8192] = {
+    let mut t = [0u16; 8192];
+    let mut v = 0usize;
+    while v < 8192 {
+        // Little-endian, so storing the u16 writes the low digit first, which
+        // is the order the format puts them in.
+        t[v] = ALPHABET[v % 91] as u16 | ((ALPHABET[v / 91] as u16) << 8);
+        v += 1;
+    }
+    t
+};
+
 pub const SYMBOL_BITS: u32 = 13;
 pub const SYMBOL_MAX: u16 = 8192; // first value that is not a symbol
 pub const ESCAPE_PAIR: u16 = 8280; // "--"

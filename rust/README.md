@@ -78,20 +78,19 @@ decision does not fire on.
 
 | high-entropy input | stable | `--features simd` |
 |---|---|---|
-| deciding per window | **459 MB/s** | **470 MB/s** |
-| scanning everything | 32 MB/s | 122 MB/s |
-| block coder alone | 549 MB/s | 549 MB/s |
+| deciding per window | **2 030 MB/s** | **2 010 MB/s** |
+| scanning everything | 31 MB/s | 125 MB/s |
+| block coder alone | 3 090 MB/s | 3 090 MB/s |
 
 On payloads that are actually compressed — the case section 10 puts a zstd
 frame into a segment for:
 
 | payload | speed | size cost |
 |---|---|---|
-| `countries.json` at zstd −3 | 113 → 414 MB/s | +0.03 % |
-| `lodash.js` at zstd −9 | 122 → 526 MB/s | none |
-| the source tar, gzipped | 118 → 521 MB/s | none |
-| `sql-wasm.wasm`, raw deflate | 118 → 485 MB/s | none |
-| `grace_hopper.jpg` | 112 → 534 MB/s | +0.11 % |
+| `countries.json` at zstd −3 | 30 → 2 276 MB/s | +0.03 % |
+| `lodash.js` at zstd −9 | 33 → 2 202 MB/s | none |
+| the source tar, gzipped | 33 → 1 961 MB/s | none |
+| `sql-wasm.wasm`, raw deflate | 33 → 2 126 MB/s | none |
 
 Raw deflate carries no magic number and is caught by entropy alone, which is
 why both signals are there. Over the whole core corpus the decision fired on no
@@ -114,6 +113,19 @@ are the same lesson from both sides: a vector probe pays when it settles many
 bytes per call. "Can anything start here" settles thirty-two bytes of a
 compressed payload every time; "does this byte change the passthrough state"
 settles two or three of English text.
+
+**The block coder is a table, not arithmetic.** Thirteen bytes to sixteen
+characters went 256 → 549 → 1 289 → 3 090 MB/s, and the last and largest step
+removed work rather than adding cleverness: a pair value is at most 8 191, so
+8 192 entries of two bytes — sixteen kilobytes, half a typical L1 — give both
+characters in one aligned load. No division, no reciprocal, no alphabet lookup.
+
+A vector unit does not help there. Extracting the eight symbols with two byte
+shuffles and a variable shift measures 1 180 MB/s against the `u128` path's
+3 050: the symbols must leave the vector registers for the table lookup, and
+moving eight lanes out costs more than eight 128-bit shifts. It is implemented,
+verified against the scalar path on 20 000 random groups, and not used —
+`src/simd.rs` says what a vector path would need instead.
 
 ## A feature flag for more speed
 

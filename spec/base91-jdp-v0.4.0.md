@@ -1422,12 +1422,12 @@ the prototype on four MB of high-entropy bytes:
 
 | | stable | with `simd` |
 |---|---|---|
-| encoder, deciding per window | **459 MB/s** | **470 MB/s** |
-| encoder, scanning everything | 32 MB/s | 122 MB/s |
-| block coder alone | 549 MB/s | 549 MB/s |
+| encoder, deciding per window | **2 030 MB/s** | **2 010 MB/s** |
+| encoder, scanning everything | 31 MB/s | 125 MB/s |
+| block coder alone | 3 090 MB/s | 3 090 MB/s |
 
-Fourteen times, and it needs no vector unit: the decision is a byte histogram
-over four kilobytes per sixteen-kilobyte window. The vector mask of
+Sixty times, and it needs no vector unit: the decision is a byte histogram over
+a kilobyte per sixteen-kilobyte window. The vector mask of
 Section 17.10 is what carries the cases the decision does not fire on, and the
 two are complements rather than alternatives.
 
@@ -1436,12 +1436,10 @@ since Section 10 puts a zstd frame inside a segment:
 
 | payload | windows called block | ratio, deciding | scanning | speed |
 |---|---|---|---|---|
-| `countries.json` at zstd −3 | 11 of 11 | 1.2308 | 1.2304 | 113 → 414 MB/s |
-| `lodash.js` at zstd −9 | 6 of 6 | 1.2308 | 1.2308 | 122 → 526 MB/s |
-| the source tar, gzipped | 8 of 9 | 1.2308 | 1.2307 | 118 → 521 MB/s |
-| `sql-wasm.wasm`, raw deflate | 20 of 20 | 1.2308 | 1.2308 | 118 → 485 MB/s |
-| `grace_hopper.jpg` | 4 of 4 | 1.2308 | 1.2294 | 112 → 534 MB/s |
-| `minduka_present.png` | 1 of 1 | 1.2308 | 1.2304 | 90 → 584 MB/s |
+| `countries.json` at zstd −3 | 11 of 11 | 1.2308 | 1.2304 | 30 → 2 276 MB/s |
+| `lodash.js` at zstd −9 | 6 of 6 | 1.2308 | 1.2308 | 33 → 2 202 MB/s |
+| the source tar, gzipped | 8 of 9 | 1.2308 | 1.2307 | 33 → 1 961 MB/s |
+| `sql-wasm.wasm`, raw deflate | 20 of 20 | 1.2308 | 1.2308 | 33 → 2 126 MB/s |
 
 Raw deflate is the row that justifies the entropy test on its own: it carries no
 magic number, and nothing but its entropy says what it is.
@@ -1451,6 +1449,36 @@ of the eleven files that are not already compressed was called block mode, and
 the corpus ratio moves from 0.97944 to 0.97945 — one part in a hundred thousand,
 which is the JPEG and the PNG giving up the 0.1 % their last few windows would
 have saved.
+
+### 17.13 What the block coder costs
+
+Thirteen bytes to sixteen characters is the floor under every other number
+here, so it is worth saying what it is made of. Measured in the prototype, in
+order of what each change was worth:
+
+| | MB/s |
+|---|---|
+| a byte at a time through the accumulator | 256 |
+| thirteen bytes at a time, division by 91 as a multiply and a shift | 549 |
+| one big-endian load per group, output written through a pointer | 1 289 |
+| **both digits from one 16 KiB table** | **3 090** |
+
+The last step is the one that matters, and it is the one that removes
+arithmetic rather than adding cleverness. A pair value is at most 8 191, so
+8 192 entries of two bytes each -- sixteen kilobytes, half a typical L1 data
+cache -- give both characters in one aligned load. There is then no division,
+no reciprocal, and no alphabet lookup left in the coder at all.
+
+**A vector unit does not help here**, which is worth recording because it is
+not obvious. Extracting the eight symbols with two byte shuffles and a variable
+shift, instead of eight shifts of a `u128`, measures at 1 180 MB/s against
+3 050: the symbols have to leave the vector registers again for the table
+lookup, and moving eight lanes out costs more than the shifts saved.
+Assembling the sixteen characters into one register to store once rather than
+eight times costs a further 9 %. Both are implemented and verified in the
+prototype and neither is used; `rust/src/simd.rs` says what a vector path would
+need instead, which is a fully vectorised digit conversion where nothing leaves
+the registers until the store.
 
 ---
 

@@ -288,3 +288,66 @@ const PACKED_ANY32: [u8; LANES] = dup({
     }
     lo
 });
+
+// ---------------------------------------------------------------------------
+// The block coder
+// ---------------------------------------------------------------------------
+
+use std::simd::{u32x4, u8x16};
+
+/// Eight thirteen-bit symbols out of thirteen bytes, in two vector steps.
+///
+/// **Measured, correct, and not used**, because it is 2.6x slower than the
+/// `u128` shifts it replaces: 1 180 MB/s against 3 050. The symbols cannot
+/// stay in the vector registers -- digit conversion is a lookup in a
+/// 16 KiB table, which no shuffle reaches -- and moving eight lanes back out
+/// costs more than the eight 128-bit shifts saved. It is kept because the next
+/// person to have this idea should have the number rather than the idea.
+///
+/// It would pay only as part of a fully vectorised digit conversion, where
+/// nothing leaves the registers until the sixteen characters are stored: the
+/// division by 91 as a multiply-shift on `u32` lanes, and the alphabet as
+/// arithmetic for values 0-61 with a shuffle for the twenty-nine punctuation
+/// characters above them. That is the shape a base64 encoder uses, and it is
+/// what this function would need around it.
+///
+/// The scalar path holds the group in a `u128` and shifts it eight times, and
+/// a 128-bit shift is two instructions on a 64-bit machine. Here each symbol
+/// gets a 32-bit lane holding the four bytes that cover it, big-endian, and
+/// one variable shift settles all four lanes at once.
+///
+/// Symbol `k` occupies bits `[13k, 13k+13)` of the group counted from the top,
+/// so it begins in byte `13k/8` at bit offset `13k%8`, and a four-byte
+/// big-endian load at that byte puts it at `19 - offset` from the bottom:
+///
+/// | k | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+/// |---|---|---|---|---|---|---|---|---|
+/// | byte | 0 | 1 | 3 | 4 | 6 | 8 | 9 | 11 |
+/// | shift | 19 | 14 | 17 | 12 | 15 | 18 | 13 | 16 |
+///
+/// The highest byte read is 14, so sixteen readable bytes are enough for
+/// thirteen of payload. `tests::simd_extract_matches_scalar` checks every lane
+/// against the `u128` path on random groups, because a bit layout that is
+/// nearly right here is a codec that is nearly right everywhere.
+#[inline]
+pub fn extract_group(bytes: &[u8]) -> [u32; 8] {
+    debug_assert!(bytes.len() >= 16);
+    let src = u8x16::from_slice(&bytes[..16]);
+
+    // Two sixteen-byte shuffles rather than one of thirty-two: a byte shuffle
+    // is a single-lane instruction on x86, and asking for thirty-two lanes
+    // makes the compiler add the lane correction back.
+    const LO: [u8; 16] = [3, 2, 1, 0, 4, 3, 2, 1, 6, 5, 4, 3, 7, 6, 5, 4];
+    const HI: [u8; 16] = [9, 8, 7, 6, 11, 10, 9, 8, 12, 11, 10, 9, 14, 13, 12, 11];
+    let lo = src.swizzle_dyn(u8x16::from_array(LO));
+    let hi = src.swizzle_dyn(u8x16::from_array(HI));
+
+    let lo: u32x4 = unsafe { std::mem::transmute(lo) };
+    let hi: u32x4 = unsafe { std::mem::transmute(hi) };
+    let mask = u32x4::splat(8191);
+    let a = (lo >> u32x4::from_array([19, 14, 17, 12])) & mask;
+    let b = (hi >> u32x4::from_array([15, 18, 13, 16])) & mask;
+
+    let (a, b) = (a.to_array(), b.to_array());
+    [a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]]
+}
