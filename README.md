@@ -85,6 +85,40 @@ protocol text 21 %. Compressing these samples instead costs 1.2713 — worse tha
 Base64 — which is the measurement that says the classes are not redundant with
 compression.
 
+## Head to head with Base85N
+
+Both implementations built from source and run in one process under one timing
+loop, so the comparison is of two encodings and not of two languages
+([`rust/examples/headtohead.rs`](rust/examples/headtohead.rs), specification
+Section 17.21). Base85N has no compressor, so the two configurations are
+reported separately and should not be read as one.
+
+| core corpus | size | encode | decode |
+|---|---|---|---|
+| **Base85N** | 1.00698 | **401 MB/s** | **1 047 MB/s** |
+| base91-jdp, no compressor | **0.98354** | 68 MB/s | 381 MB/s |
+| base91-jdp, zstd −5 | **0.52271** | **457 MB/s** | 351 MB/s |
+| base91-jdp, zstd 9 | **0.31449** | 54 MB/s | 520 MB/s |
+
+**Smaller in every configuration** — 2.3 % on the core corpus and 1.3 % on
+Silesia with no compressor on either side, 14.2 % on field-length payloads, and
+41 % to 69 % with one. **At level −5, 48 % smaller and 14 % faster at the same
+time**, which is the setting a caller picks when they want speed.
+
+**Slower in two places, and both are real.** Without a compressor this encoder
+is six times slower, because the candidate scan runs over every byte no class
+claims. And it decodes two to three times slower in every configuration; 91
+characters give a byte-oriented decoder a harder job than 85, and that is the
+price of the density rather than a bug left to fix.
+
+**Two things Base85N does that this format does not.** Its alphabet avoids the
+delimiters of several text formats, where this one is dense inside a JSON
+string and nothing more: `<`, `&` and `,` are alphabet characters here, so XML,
+HTML and CSV are Base85N's use and not this one's. And a compressed payload is
+opaque — passthrough leaves text legible on the uncompressed path, but every
+figure above that beats Base85N by more than 2 % is a stream nothing can be
+read out of without decoding it.
+
 ## The repository
 
 | | |

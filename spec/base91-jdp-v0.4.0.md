@@ -1901,6 +1901,100 @@ come off a multi-block frame too, by pinning the window log so that a decoder
 knows it — worth two bytes on a payload of at least 128 KiB, which is not worth
 constraining the compressor for.
 
+### 17.21 Against Base85N, head to head
+
+Everything above measures this format against itself. This section measures it
+against the codec it is derived from, on three corpora, with both
+implementations built from source and run in the same process under the same
+timing loop — `rust/examples/headtohead.rs`. Both are Rust, compiled by the
+same compiler at the same optimisation level, on the same bytes, so what is
+compared is two encodings rather than two languages.
+
+Base85N has no compressor. Two configurations are therefore reported and must
+not be read as one.
+
+#### Size, neither side compressing
+
+| corpus | Base85N | base91-jdp | |
+|---|---|---|---|
+| core, 6.52 MB | 1.00698 | **0.98354** | −2.33 % |
+| Silesia, 202 MiB | 1.05114 | **1.03792** | −1.26 % |
+| 55 field samples under 200 B | 1.07812 | **0.92524** | −14.18 % |
+
+Smaller on 12 of the 13 core files — `requests-history.md` is the exception, by
+0.05 % — and on all 12 Silesia files. The margin is widest where the payload is
+short, because the packed bases of Section 9 reach alphabets Base85N carries
+through passthrough.
+
+#### Size with a compressor, which is the question a caller actually has
+
+| corpus | Base85N | base91-jdp, zstd −5 | zstd 3 | zstd 9 |
+|---|---|---|---|---|
+| core | 1.00698 | 0.52271 (−48 %) | 0.34443 (−66 %) | **0.31449 (−69 %)** |
+| Silesia | 1.05114 | 0.61569 (−41 %) | 0.41053 (−61 %) | **0.38105 (−64 %)** |
+| short | 1.07812 | 0.92524 (−14 %) | **0.91936 (−15 %)** | 0.91936 (−15 %) |
+
+#### Throughput
+
+Two rows, not one. The first is a build of base91-jdp **without** zstd, which
+is the only configuration comparable to a codec that has no compressor. The
+second is the default build, where Section 11.5's entropy sample decides.
+
+| core corpus | encode | encode, 4 threads | decode |
+|---|---|---|---|
+| **Base85N** | **401 MB/s** | **412 MB/s** | **1 047 MB/s** |
+| base91-jdp, no compressor | 68 MB/s | 152 MB/s | 381 MB/s |
+| base91-jdp, zstd −5 | **457 MB/s** | | 351 MB/s |
+| base91-jdp, zstd 3 | 244 MB/s | | 457 MB/s |
+| base91-jdp, zstd 9 | 54 MB/s | | 520 MB/s |
+
+On Silesia the same shape: Base85N 352 encode and 931 decode, base91-jdp 86 and
+402 without a compressor, 444 and 449 at level −5.
+
+**Read the losses first.** Without a compressor this encoder is **six times
+slower** than Base85N's: the candidate scan of Section 11.1 runs over every
+byte no class claims, and Section 17.12 prices it. **It decodes between two and
+three times slower in every configuration**, and no setting of this format
+changes that. Base85N's alphabet of 85 leaves a byte-oriented decoder a
+simpler job than 91 does, and that is a property of the choice of 91, not an
+implementation detail waiting to be fixed.
+
+**Then the win.** At level −5 this encoder is **48 % smaller and 14 % faster**
+than Base85N on the core corpus, and 41 % smaller and 14 % faster on Silesia.
+That is not a trade-off, and Section 17.17 explains why it is not a paradox:
+compressing first hands the container a payload with nothing in it to scan.
+The setting a caller reaches for when they want speed is the setting where this
+format wins on both axes at once.
+
+#### What Base85N does that this format cannot
+
+Two things, and neither is a measurement.
+
+**The alphabet is JSON-safe and no more.** Base85N's 85 characters were chosen
+to avoid the delimiters of several text formats at once; this format's 91 are
+basE91's with `"` replaced, chosen to be dense inside a JSON string. What that
+costs:
+
+| embedding context | base91-jdp | Base85N |
+|---|---|---|
+| JSON string | **safe** | **safe** |
+| XML or HTML text | no — contains `<` and `&` | **safe** |
+| XML or HTML attribute | no — contains `<` and `&` | **safe** |
+| CSV field | no — contains `,` | **safe** |
+| URL query value | no | no |
+
+Six extra characters are worth about 2 % of size and cost three embedding
+contexts. A caller who needs XML, HTML or CSV should use Base85N; this format
+does not compete for that use and should not be made to.
+
+**A compressed payload is not readable.** Base85N's passthrough leaves text
+legible in the encoded stream, and so does this format's — but only on the
+uncompressed path, which is the path that is 2 % smaller rather than 48 %.
+Every result in the second table above is a stream in which nothing can be read
+without decoding it. Where an operator greps logs or eyeballs a config, that
+matters more than the ratio, and Section 11.2's comparison is per-call: an
+encoder may simply not compress.
+
 ---
 
 ## 18. What was considered and left out (informative)

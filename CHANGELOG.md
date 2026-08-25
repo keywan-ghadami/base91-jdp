@@ -19,6 +19,26 @@ fits in one, which is everything up to 128 KiB. It is worth nothing on a
 megabyte and 11 % of the encoding on a protocol field, and it halves the length
 at which compression starts to pay. Specification Sections 10.1, 10.2 and 17.20.
 
+Measured head to head against Base85N 0.5.1, both implementations built from
+source and run in one process under one timing loop, so the comparison is of
+two encodings rather than two languages. Smaller in every configuration: 2.3 %
+on the core corpus and 1.3 % on Silesia with neither side compressing, 14.2 %
+on field-length payloads, 41 % to 69 % with a compressor. At zstd −5, 48 %
+smaller and 14 % faster at the same time. Slower in two places, both stated
+rather than buried: six times slower to encode without a compressor, which is
+the candidate scan, and two to three times slower to decode in every
+configuration, which is what 91 characters cost a byte-oriented decoder against
+85. And two things Base85N does that this format does not — its alphabet is
+safe in XML, HTML and CSV where this one is dense inside a JSON string and
+nothing more, and a compressed payload is not readable where passthrough leaves
+text legible. Specification Section 17.21.
+
+Finding that took three per-byte costs out of the decoder, none of them the
+format: a whole-stream copy to strip whitespace no stream contains, a walk over
+the R-Set per byte of passthrough where a table answers in one lookup, and a
+missing bulk path for block mode where the encoder has had one from the start.
+Decode went from 213 MB/s to 381 on the core corpus.
+
 The reference implementation moved with it. v0.4.0 is implemented in
 `rust/`; the JavaScript package that implemented v0.3.0 is complete, tested and
 kept under `history/javascript-v0.3.0/`, where it is no longer published to npm

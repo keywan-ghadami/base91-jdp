@@ -266,6 +266,45 @@ Nothing on a megabyte, 11 % on a protocol field. What it buys is the crossover:
 compresses where compression wins goes from 0.9252 to **0.9194** — the first
 time compression has improved that number at all.
 
+**Head to head with Base85N, both built from source.** `examples/headtohead.rs`
+runs both codecs in one process under one timing loop, so the comparison is of
+two encodings and not of two languages. Base85N has no compressor, so a build
+of this crate without zstd is the like-for-like row and the default build is
+reported separately.
+
+| core corpus | size | encode | encode, 4 threads | decode |
+|---|---|---|---|---|
+| **Base85N 0.5.1** | 1.00698 | **401 MB/s** | **412 MB/s** | **1 047 MB/s** |
+| this crate, no compressor | **0.98354** | 68 MB/s | 152 MB/s | 381 MB/s |
+| this crate, zstd −5 | **0.52271** | **457 MB/s** | | 351 MB/s |
+| this crate, zstd 3 | **0.34443** | 244 MB/s | | 457 MB/s |
+| this crate, zstd 9 | **0.31449** | 54 MB/s | | 520 MB/s |
+
+Smaller in every configuration: 2.3 % on the core corpus and 1.3 % on Silesia
+with neither side compressing, 14.2 % on the short group, 41–69 % with a
+compressor. At level −5, 48 % smaller *and* 14 % faster at once.
+
+Slower in two places. Without a compressor the encoder is six times slower,
+which is the candidate scan of section 11.1 running over every byte no class
+claims. And it decodes two to three times slower in every configuration — 91
+characters are a harder job for a byte-oriented decoder than 85, and the first
+version of this decoder was five times slower still (see below). Specification
+section 17.21 has all three corpora and the two things Base85N does that this
+format does not.
+
+**Three things the decoder was doing per byte.** Measured against Base85N's,
+this one was five times slower on text, and none of it was the format.
+`significant` copied the whole stream into a fresh vector to strip whitespace
+that no stream this encoder produces contains — it now scans branchlessly and
+borrows, and a JPEG went from 384 MB/s to 810. Passthrough walked the eight
+R-Set positions per byte to answer what a 256-entry table answers in one
+lookup; the table is built once for the stream and each segment lends it at
+most eight entries, and CSS went from 240 MB/s to 645. And block mode had no
+bulk path at all where the encoder has had one from the start: sixteen
+characters are eight pairs are thirteen bytes, assembled in one `u128`, written
+once, with the ceiling checked per group instead of per byte. Together, 213
+MB/s to 381 on the core corpus.
+
 **Where compression starts to pay.** `examples/firstwin.rs` sweeps it byte by
 byte, against the whole plain encoder rather than against block mode:
 

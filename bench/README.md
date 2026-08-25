@@ -37,9 +37,25 @@ bytes or fails loudly.
 
 ## The reference implementation of Base85N
 
-`base85n/` runs the upstream Go implementation, v0.5.1, so that the comparisons
-come from an execution rather than from its documentation. It needs Go on the
-path; without it those columns are left out.
+`base85n/` runs the upstream Go implementation, v0.5.1, so that the size
+comparisons come from an execution rather than from its documentation. It needs
+Go on the path; without it those columns are left out.
+
+For **throughput**, Go against Rust would measure the languages. Base85N also
+ships a Rust implementation with the same shape as this one — a scalar path, an
+optional nightly vector path, a parallel encoder — and
+[`rust/examples/headtohead.rs`](../rust/README.md) links it directly, so both
+sides of every number in specification Section 17.21 are compiled by the same
+compiler at the same optimisation level and timed by the same loop in one
+process. It needs a Base85N checkout beside this repository:
+
+```sh
+git clone https://github.com/keywan-ghadami/base85n ../keywan-ghadami/base85n
+cargo run --release --features base85n --manifest-path rust/Cargo.toml \
+    --example headtohead -- bench/corpus
+```
+
+The `base85n` feature is off by default and no part of the library uses it.
 
 ## Running the measurements
 

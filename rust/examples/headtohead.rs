@@ -17,15 +17,11 @@
 
 use std::time::Instant;
 
-fn rate(bytes: usize, mut f: impl FnMut()) -> f64 {
-    let mut best = f64::MAX;
-    for _ in 0..3 {
-        let t = Instant::now();
-        f();
-        best = best.min(t.elapsed().as_secs_f64());
-    }
-    bytes as f64 / 1e6 / best
-}
+/// One encoder run over every file, timed as a whole. Boxed because the
+/// closures differ in what they capture.
+type Run<'a> = Box<dyn FnMut(&[u8]) -> usize + 'a>;
+/// The same for a decoder, which is handed a stream rather than bytes.
+type Read<'a> = Box<dyn FnMut(&str) -> usize + 'a>;
 
 fn pct(a: usize, b: usize) -> String {
     format!("{:+.2} %", 100.0 * (a as f64 / b as f64 - 1.0))
@@ -91,7 +87,7 @@ fn main() {
     // and JSON glued together asks it a question no caller asks. Aggregate is
     // total bytes over total time, which is what a caller encoding the corpus
     // file by file would see.
-    let sum_rate = |mut f: Box<dyn FnMut(&[u8]) -> usize>| -> f64 {
+    let sum_rate = |mut f: Run| -> f64 {
         let mut best = f64::MAX;
         for _ in 0..3 {
             let t = Instant::now();
@@ -104,7 +100,7 @@ fn main() {
     };
     let enc85: Vec<String> = files.iter().map(|(_, d)| base85n::encode(d)).collect();
     let enc91: Vec<String> = files.iter().map(|(_, d)| base91_jdp::encode(d)).collect();
-    let dec_rate = |mut f: Box<dyn FnMut(&str) -> usize>, src: &[String]| -> f64 {
+    let dec_rate = |mut f: Read, src: &[String]| -> f64 {
         let mut best = f64::MAX;
         for _ in 0..3 {
             let t = Instant::now();
