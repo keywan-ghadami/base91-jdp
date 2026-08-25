@@ -23,8 +23,7 @@ struct Candidate {
     len: usize,
     /// Characters, flush field included.
     cost: usize,
-    /// For `RUN`, the repeated byte. For `PT`, mask and profile. For `ZMIX`,
-    /// the number of gaps.
+    /// For `RUN`, the repeated byte. For `PT`, the mask and the profile.
     a: u32,
     b: u32,
 }
@@ -363,11 +362,6 @@ fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
                 a: 0,
                 b: 0,
             });
-            if families & tuning::F_ZMIX != 0 {
-                if let Some(c) = scan_zmix(data, at, overhead) {
-                    consider(c);
-                }
-            }
         } else {
             consider(Candidate {
                 class: CLASS_RUN,
@@ -454,59 +448,6 @@ fn run_length(data: &[u8], at: usize) -> usize {
         j += 1;
     }
     j - at
-}
-
-/// A chain of zero runs separated by gaps of one fixed width: section 10.3.
-fn scan_zmix(data: &[u8], at: usize, overhead: usize) -> Option<Candidate> {
-    let first = run_length(data, at);
-    let after = at + first;
-    if after >= data.len() {
-        return None;
-    }
-    // The gap width the chain will fix: how many non-zero bytes follow.
-    let mut g = 0usize;
-    while after + g < data.len() && data[after + g] != 0 && g < 8 {
-        g += 1;
-    }
-    if g == 0 || g > 8 || after + g >= data.len() || data[after + g] != 0 {
-        return None;
-    }
-
-    let mut cost = overhead + length_chars(first);
-    let mut bytes = first;
-    let mut gaps = 0usize;
-    let mut pos = after;
-    // Every further link must present exactly `g` non-zero bytes and then at
-    // least one zero. Canonicity rule 8: extend while that holds.
-    loop {
-        if pos + g > data.len() || bytes + g >= MAX_SEGMENT_BYTES {
-            break;
-        }
-        if data[pos..pos + g].iter().any(|&b| b == 0) {
-            break;
-        }
-        if pos + g >= data.len() || data[pos + g] != 0 {
-            break;
-        }
-        let zeros = run_length(data, pos + g);
-        if bytes + g + zeros > MAX_SEGMENT_BYTES || gaps + 1 > 89 {
-            break;
-        }
-        cost += packed_chars(g, 8) + length_chars(zeros);
-        bytes += g + zeros;
-        gaps += 1;
-        pos += g + zeros;
-    }
-    if gaps == 0 {
-        return None;
-    }
-    Some(Candidate {
-        class: CLASS_ZMIX_FIRST + (g as u16 - 1),
-        len: bytes,
-        cost: cost + length_chars(gaps), // the count field
-        a: g as u32,
-        b: gaps as u32,
-    })
 }
 
 /// The passthrough prefix scan of section 11.1: how far one segment reaches,
@@ -609,32 +550,6 @@ fn emit(enc: &mut Encoder, data: &[u8], at: usize, c: &Candidate) {
         CLASS_RUN => {
             put_length(c.len, &mut enc.out);
             put_pair(c.a as u16, &mut enc.out);
-        }
-        CLASS_ZMIX_FIRST..=CLASS_ZMIX_LAST => {
-            let g = c.a as usize;
-            put_length(c.b as usize, &mut enc.out); // the gap count
-            let mut pos = at;
-            let end = at + c.len;
-            let mut gaps = c.b;
-            loop {
-                let zeros = run_length(data, pos);
-                put_length(zeros, &mut enc.out);
-                pos += zeros;
-                if gaps == 0 {
-                    break;
-                }
-                // Whole symbols with the last one zero-padded, exactly as a
-                // packed payload: the decoder reads a gap the same way it
-                // reads a packed base, off the top of the symbol.
-                let mut a = Acc::new();
-                for &b in &data[pos..pos + g] {
-                    a.push(b as u32, 8, &mut enc.out);
-                }
-                a.finish_padded(&mut enc.out);
-                pos += g;
-                gaps -= 1;
-            }
-            debug_assert_eq!(pos, end);
         }
         CLASS_PACKED_FIRST..=CLASS_PACKED_LAST => {
             let ci = (c.class - CLASS_PACKED_FIRST) as usize;

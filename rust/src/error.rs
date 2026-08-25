@@ -19,7 +19,6 @@ pub enum Code {
     InvalidFinalBlock,
     InvalidIndex,
     InvalidRunValue,
-    InvalidChain,
     MalformedPadding,
     MalformedFrame,
 }

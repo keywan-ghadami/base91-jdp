@@ -39,7 +39,7 @@ fn run(files: &[(String, Vec<u8>)], level: Option<i32>) -> (f64, f64) {
 fn main() {
     let short = load("bench/corpus/short");
     let core = load("bench/corpus");
-    let all = tuning::F_RUN | tuning::F_ZMIX | tuning::F_PACKED | tuning::F_PT;
+    let all = tuning::F_RUN | tuning::F_PACKED | tuning::F_PT;
 
     println!("| path | classes | chars/byte | MB/s |");
     println!("|---|---|---|---|");
@@ -52,7 +52,6 @@ fn main() {
     ] {
         for (what, mask) in [
             ("with runs", all),
-            ("without ZMIX", tuning::F_RUN | tuning::F_PACKED | tuning::F_PT),
             ("without any run class", tuning::F_PACKED | tuning::F_PT),
         ] {
             tuning::FAMILIES.store(mask, Relaxed);

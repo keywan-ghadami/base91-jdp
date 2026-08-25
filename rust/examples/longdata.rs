@@ -52,11 +52,10 @@ fn main() {
         o as f64 / i as f64
     };
     for (label, mask) in [
-        ("all", tuning::F_RUN | tuning::F_ZMIX | tuning::F_PACKED | tuning::F_PT),
-        ("no chained gaps", tuning::F_RUN | tuning::F_PACKED | tuning::F_PT),
+        ("all", tuning::F_RUN | tuning::F_PACKED | tuning::F_PT),
         ("no runs at all", tuning::F_PACKED | tuning::F_PT),
-        ("no packed bases", tuning::F_RUN | tuning::F_ZMIX | tuning::F_PT),
-        ("no passthrough", tuning::F_RUN | tuning::F_ZMIX | tuning::F_PACKED),
+        ("no packed bases", tuning::F_RUN | tuning::F_PT),
+        ("no passthrough", tuning::F_RUN | tuning::F_PACKED),
         ("block coder alone", 0),
     ] {
         tuning::FAMILIES.store(mask, Relaxed);

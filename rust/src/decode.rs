@@ -37,7 +37,6 @@ fn class_name(class: u16) -> &'static str {
         CLASS_PACKED_FIRST..=CLASS_PACKED_LAST => {
             PACKED[(class - CLASS_PACKED_FIRST) as usize].name
         }
-        CLASS_ZMIX_FIRST..=CLASS_ZMIX_LAST => "ZMIX",
         _ => "?",
     }
 }
@@ -316,25 +315,6 @@ impl<'a> Decoder<'a> {
                     self.emit(out, b as u8)?;
                 }
             }
-            CLASS_ZMIX_FIRST..=CLASS_ZMIX_LAST => {
-                let g = (class - CLASS_ZMIX_FIRST + 1) as usize;
-                let gaps = self.bounded_length(89)?;
-                let mut total = 0usize;
-                for i in 0..=gaps {
-                    let zeros = self.bounded_length(MAX_SEGMENT_BYTES)?;
-                    total += zeros;
-                    if total > MAX_SEGMENT_BYTES {
-                        return Err(self.err(Code::InvalidChain, "chain past the segment bound"));
-                    }
-                    for _ in 0..zeros {
-                        self.emit(out, 0)?;
-                    }
-                    if i < gaps {
-                        self.read_packed(g, 8, out)?;
-                        total += g;
-                    }
-                }
-            }
             CLASS_ZSTD => {
                 #[cfg(not(feature = "zstd"))]
                 {
@@ -438,31 +418,6 @@ impl<'a> Decoder<'a> {
             while nb >= 8 && into.len() < count {
                 nb -= 8;
                 into.push(((bits >> nb) & 0xFF) as u8);
-            }
-        }
-        Ok(())
-    }
-
-    /// `count` bytes packed at `w` bits each, as their own symbol run.
-    fn read_packed(&mut self, count: usize, w: u32, out: &mut Vec<u8>) -> Result<()> {
-        let chars = 2 * ((count * w as usize + 12) / 13);
-        if self.left() < chars {
-            return Err(self.err(Code::UnexpectedEos, "a packed payload"));
-        }
-        let (mut bits, mut nb) = (0u64, 0u32);
-        let mut produced = 0usize;
-        for _ in 0..chars / 2 {
-            let v = self.take_pair()?;
-            if v >= SIGNAL_MIN {
-                return Err(self.err(Code::InvalidCharacter, "a signal inside a payload"));
-            }
-            bits = (bits << SYMBOL_BITS) | v as u64;
-            nb += SYMBOL_BITS;
-            while nb >= w && produced < count {
-                nb -= w;
-                let idx = ((bits >> nb) & ((1u64 << w) - 1)) as u8;
-                self.emit(out, idx)?;
-                produced += 1;
             }
         }
         Ok(())

@@ -107,18 +107,6 @@ fn runs_and_chains() {
     for &len in &[8369usize, 8370, 65_536, 65_537, 200_000] {
         trip(&vec![0u8; len]);
     }
-    // The alternation the ZMIX classes exist for: zero runs with fixed gaps.
-    for g in 1..=9usize {
-        for zeros in [1usize, 2, 3, 17, 90, 8400] {
-            let mut data = Vec::new();
-            for k in 0..40u8 {
-                data.extend(std::iter::repeat(0u8).take(zeros));
-                data.extend((0..g).map(|x| 1 + ((k as usize + x) % 250) as u8));
-            }
-            data.extend(std::iter::repeat(0u8).take(zeros));
-            trip(&data);
-        }
-    }
 }
 
 #[test]
@@ -183,7 +171,7 @@ fn adversarial_decode_is_refused_not_guessed() {
     let bad: [(&str, Code); 6] = [
         // The escape, which this version cannot read.
         ("--A", Code::ExtendedClass),
-        // A class above the last defined one: 8192 + 2*31 = 8254.
+        // A class above the last defined one.
         (&PAIR_CLASS_31, Code::UnknownClass),
         // A signal that ends the stream before its fields arrive.
         (&PAIR_ZRUN, Code::UnexpectedEos),
@@ -214,8 +202,8 @@ thread_local! {
 }
 
 lazy_static_like!(PAIR_CLASS_31, pair(8192 + 2 * 31) + "AAAA");
-lazy_static_like!(PAIR_ZRUN, pair(8192 + 2 * 21));
-lazy_static_like!(ZRUN_ZERO_LEN, pair(8192 + 2 * 21) + "A");
+lazy_static_like!(PAIR_ZRUN, pair(8192 + 2 * 18));
+lazy_static_like!(ZRUN_ZERO_LEN, pair(8192 + 2 * 18) + "A");
 
 #[macro_export]
 macro_rules! lazy_static_like {

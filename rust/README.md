@@ -50,8 +50,8 @@ from behind Base85N to ahead of it with no compressor on either side:
 
 | | Base85N | jdp 0.3.0 | 0.4.0 projected | **0.4.0, this crate** |
 |---|---|---|---|---|
-| core corpus, 6.52 MB | 1.00698 | 1.09650 | 1.00464 | **0.97831** |
-| Silesia, 202 MiB | 1.05114 | 1.09861 | 1.03434 | **1.03635** |
+| core corpus, 6.52 MB | 1.00698 | 1.09650 | 1.00464 | **0.98354** |
+| Silesia, 202 MiB | 1.05114 | 1.09861 | 1.03434 | **1.03792** |
 
 **Parallel encoding works, and the obvious join does not.** Cutting the input
 at multiples of thirteen bytes lets each worker start with an empty accumulator
@@ -221,10 +221,12 @@ still pay in size below the compression crossover, which is around a hundred
 bytes — even with compression applied wherever it wins, dropping them costs
 3.0 % over the short corpus.
 
-`ZMIX` can. It is worth 0.53 % on the core corpus and 0.15 % on Silesia without
-a compressor, nothing on the short corpus, nothing with compression, and its
-throughput is neutral — against eight of the forty-four classes and the chain
-grammar. See section 17.19.
+`ZMIX` could, and has been removed. It was worth 0.53 % on the core corpus and
+0.15 % on Silesia without a compressor, nothing on the short corpus, nothing
+with compression, and its throughput was neutral — against eight of the
+forty-four classes, a chain grammar, a canonicity rule and an error code.
+Sections 17.7 and 18.7 keep the record, including the projection that justified
+building it and was wrong by a factor of ten.
 
 What the ablation *did* remove is three classes: `DEC`, `ALPHA_U` and `ALNUM`,
 whose alphabets are contained in `HEXL`, `B32` and `B64` at the same width. A

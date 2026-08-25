@@ -83,9 +83,10 @@ padding, no terminator.
   to eighty-nine of them and five for up to 8 369, because the class *is* the
   byte value; any other repeated byte costs one pair more. Where short runs
   alternate with a few bytes that are not zero — a symbol table, a relocation
-  table — one segment carries the whole alternation, with the gap width in the
-  class rather than in a field. Section 18.2 is why this is in the format rather
-  than left to the compressor.
+  table — a run class takes each run and the bytes between them go through
+  block mode. Section 18.2 is why runs are in the format rather than left to
+  the compressor, and Section 18.7 is why the class that carried the whole
+  alternation is not.
 
 * **Packed bases** carry text drawn from a restricted alphabet at four, five or
   six bits per byte. A hex string costs 0.62 characters per byte where
@@ -376,8 +377,7 @@ Length zero is malformed.
 | 17 | `ZSTD` | block-packed | 8 | a zstd frame (Section 10) |
 | 18 | `ZRUN` | none | — | `L` zero bytes (Section 10.2) |
 | 19 | `RUN` | one pair | — | `L` copies of one byte (Section 10.2) |
-| 20 … 27 | `ZMIX_G1` … `ZMIX_G8` | chain | — | zero runs separated by fixed `g`-byte gaps (Section 10.3) |
-| 28 … 43 | — | reserved | | MUST be rejected with `UNKNOWN_CLASS` |
+| 20 … 43 | — | reserved | | MUST be rejected with `UNKNOWN_CLASS` |
 
 There is no class for decimal digits, for `A`…`Z` alone, or for the
 alphanumerics. Each of those alphabets is contained in another class's at the
@@ -592,37 +592,6 @@ expand a stream by more than its own signal. A run longer than
 every later one begins where its predecessor ended, so its flush field is empty
 and it costs three characters.
 
-### 10.3 Runs with gaps
-
-Structured binary is not one long run. A symbol table, a relocation table, a
-glyph table is short zero runs separated by a few bytes that are not zero, over
-and over, and each of those gaps ends a `ZRUN` and starts another — two signal
-pairs for two bytes of content.
-
-Classes 20 to 27 carry the whole alternation in one segment. The class fixes
-the gap width `g = class − 22`, from one byte to eight, and the segment is:
-
-```
-count  len(0)  gap(0)  len(1)  gap(1)  ...  len(c-1)  gap(c-1)  len(c)
-```
-
-`count` is the length field of Section 7.3 read as a number of gaps, `1 ≤ c`;
-each `len(i)` is a length field giving a run of `1 …` zero bytes; each `gap(i)`
-is exactly `g` bytes, packed at `w = 8` into `2 × ⌈8g / 13⌉` characters of its
-own. A segment carries `c + 1` zero runs and `c` gaps, and the total number of
-bytes it emits MUST NOT exceed `MAX_SEGMENT_BYTES`.
-
-**The gap width is in the class, not in a field, and that is the whole design.**
-What one of these segments saves over the `ZRUN`–block–`ZRUN` it replaces is a
-signal pair, less whatever rounding the gap to whole symbols costs against block
-mode's amortised thirteen bits per symbol — one or two characters. A field
-naming the gap width would cost one of those characters back, which Section 18.7
-measures as roughly two thirds of the gain. Eight classes and no field is the
-cheaper arrangement, and eight covers the gap widths that occur.
-
-Chaining is what makes it pay rather than the pairing alone: a class that
-carried exactly two runs and one gap could swallow only every other boundary in
-an alternating sequence, and Section 18.7 measures both.
 
 ---
 
@@ -684,7 +653,6 @@ empty flush field; one that costs a character moves both by four to eight bytes.
 |---|---|---|
 | `ZRUN` | 2 | 2 |
 | `RUN` | 4 | 5 |
-| `ZMIX_Gg` | one gap, against two `ZRUN`s | always |
 | `w = 4` | 5 | 5 |
 | `w = 5` | 5 | 9 |
 | `w = 6` | 10 | 12 |
@@ -730,10 +698,6 @@ Encoder output is deterministic:
    match one of classes 1 to 6, that class MUST be used rather than class 0.
 7. **`ZRUN` before `RUN`.** A run of zero bytes MUST be class 18, never class 19
    with a zero payload pair.
-8. **Maximal chain.** A `ZMIX` segment MUST extend while the next gap is exactly
-   `g` bytes and the next zero run is at least one byte — subject to
-   `MAX_SEGMENT_BYTES` and to `count` fitting its tier. Every zero run in the
-   stream is maximal, so a gap byte adjacent to a run boundary is never zero.
 
 Two encoders that implement the same set of classes therefore produce identical
 output. An encoder that implements fewer produces valid but larger output, which
@@ -884,9 +848,8 @@ else:            if L > MAX_SEGMENT_BYTES:  error INVALID_LENGTH
 ```
 
 Then the payload: Section 8.4 for classes 0–6, Section 9 for 7–16, Section 10.1
-for 17, Section 10.2 for 18 and 19, Section 10.3 for 20–27, whose length field
-counts gaps rather than bytes and whose own bound is on the bytes it emits.
-Block mode resumes immediately afterwards, with `b = n = 0`.
+for 17, and Section 10.2 for 18 and 19. Block mode resumes immediately
+afterwards, with `b = n = 0`.
 
 ### 12.5 Conversion
 
@@ -914,7 +877,6 @@ layer refused. A caller catches one type and switches on the code.
 | `INVALID_FINAL_BLOCK` | A final group whose width the character count forbids, or one carrying more bits than are owed |
 | `INVALID_INDEX` | A packed-base index at or above `b` |
 | `INVALID_RUN_VALUE` | A `RUN` pair at or above 256, or a `RUN` pair of zero |
-| `INVALID_CHAIN` | A `ZMIX` segment whose count is zero, or which emits more than `MAX_SEGMENT_BYTES` |
 | `MALFORMED_PADDING` | Nonzero padding bits in a packed base (optional check) |
 | `MALFORMED_FRAME` | A zstd frame the decompressor rejects, a skippable frame, or trailing bytes after one |
 
@@ -1025,9 +987,6 @@ walked once — can decode the pieces independently, and that is the only case.
   `L × w` is and is not a multiple of 13, and a segment of `MAX_SEGMENT_BYTES`.
 * Zero runs of every length 1–100, and at 8 369, 8 370, 65 536; the same for
   `RUN` with byte values 1, 127, 128, 255.
-* For every `ZMIX` class: chains of 1, 2 and 89 gaps, a chain that ends because
-  the gap width changes, one that ends on `MAX_SEGMENT_BYTES`, and a gap whose
-  bytes include a zero that is not adjacent to a run.
 * Hyphens — `-`, `--`, `---` and longer runs — at the start, in the middle and
   at the end of a passthrough payload, and immediately before and after a
   segment boundary.
@@ -1043,20 +1002,19 @@ walked once — can decode the pieces independently, and that is the only case.
 * The emitted `profile` is the smallest viable one, and `mask` has a set bit for
   exactly the R-Set characters present.
 * Classes 1–6 are used wherever they apply; class 0 never duplicates them.
-* A zero run is never emitted as `RUN`, and a `ZMIX` chain is always maximal.
+* A zero run is never emitted as `RUN`.
 * The flush and length fields take the fewest characters that carry them.
 * Two encoders implementing the same class set produce byte-identical output.
 
 ### 15.4 Adversarial decode
 
-* Classes 28–43 and the escape, which MUST be rejected, not skipped.
+* Classes 20–43 and the escape, which MUST be rejected, not skipped.
 * Every `hi` and pending-bit combination, valid and not, including `n_enc = 14`
   and `n_enc = 15`, which no encoder can produce.
 * Length zero, lengths above the class bound, and a value written in a longer
   tier than necessary, in every tier.
 * Packed indices at and above `b` for each class where `b < 2^w`.
 * A `RUN` pair of zero and of 256.
-* A `ZMIX` chain whose runs sum past `MAX_SEGMENT_BYTES`.
 * A signal at the very end of the input, with each field truncated in turn, and
   a two-character stream whose pair is a signal.
 * A `ZSTD` segment whose frame declares a content size larger than any ceiling
@@ -1213,9 +1171,8 @@ nothing else. `jdp 0.4.0` is the projection of Sections 8, 9 and 10.2.
 
 | | Base85N | jdp 0.3.0 | 0.4.0 projected | **0.4.0 measured** |
 |---|---|---|---|---|
-| core, 6.52 MB | 1.00698 | 1.09650 | 1.00464 | **0.97831** |
-| Silesia, 202 MiB | 1.05114 | 1.09861 | 1.03434 | **1.03635** |
-| both, 218 MB | 1.04982 | 1.09855 | 1.03345 | **1.03462** |
+| core, 6.52 MB | 1.00698 | 1.09650 | 1.00464 | **0.98354** |
+| Silesia, 202 MiB | 1.05114 | 1.09861 | 1.03434 | **1.03792** |
 
 The last column is the prototype in `rust/`, encoding the corpus and decoding
 it again. The one before it is what this document projected before that
@@ -1229,8 +1186,8 @@ exist to carry; the run break of Section 11.1 is that finding, and it is worth
 Read across a row. 0.3.0, which has passthrough and the block coder and nothing
 else, is 8.9 % behind Base85N on the core corpus. The passthrough of Section 8
 with NUL admitted, the packed bases of Section 9 and the run classes of
-Sections 10.2 and 10.3 put it **2.85 % ahead on the core corpus, 1.41 % ahead
-on Silesia and 1.45 % ahead over both**, with no compressor on either side.
+Section 10.2 put it **2.32 % ahead on the core corpus and 1.26 % ahead on
+Silesia**, with no compressor on either side.
 
 Where the format stands on its own arithmetic rather than on a corpus: the block
 coder is **1.2308 characters per byte against Base85N's 1.25**, 1.56 % denser,
@@ -1284,50 +1241,28 @@ per segment the way the profile is. It does not. One eight-member set reaches
 what is reachable, and a second set would have to be paid for by every segment
 that names it, to buy the 1.3 points that the low control bytes are worth.
 
-### 17.7 What the chained gaps are worth
+### 17.7 What the chained gaps were worth
 
-Two designs were measured for Section 10.3, over both corpora, as the ratio they
-would produce and its margin over Base85N:
+An earlier draft of this version had eight further classes, `ZMIX_G1` to
+`ZMIX_G8`, carrying an alternation of zero runs separated by gaps of one fixed
+width — the shape a symbol table or a relocation table has. They are gone, and
+this is what they measured before they went:
 
-| design | core | Silesia | both |
-|---|---|---|---|
-| no gap class | 1.02281 (−1.6 %) | 1.05013 (+0.1 %) | 1.04931 (+0.05 %) |
-| two runs, one gap, `g ≤ 2` | 1.01988 (−1.3 %) | 1.04719 (+0.4 %) | 1.04637 (+0.33 %) |
-| two runs, one gap, `g ≤ 8` | 1.01306 (−0.6 %) | 1.04128 (+0.9 %) | 1.04044 (+0.89 %) |
-| **chained, `g ≤ 8`** | **1.00464 (+0.2 %)** | **1.03434 (+1.6 %)** | **1.03345 (+1.56 %)** |
-| chained, `g ≤ 64` | 1.00061 (+0.6 %) | 1.02909 (+2.1 %) | 1.02824 (+2.06 %) |
-| chained, `g ≤ 8`, width in a field | 1.01595 (−0.9 %) | 1.04403 (+0.7 %) | 1.04319 (+0.63 %) |
-
-Three things follow from that table, and each is a decision in Section 10.3:
-chain rather than pair, because a class carrying exactly two runs and one gap
-swallows only every other boundary; put the width in the class rather than a
-field, because the field costs back one of the one or two characters the merged
-signal saved; and stop at eight, because sixty-four classes do not exist to be
-spent.
-
-**The implementation does not agree with the size of that gain.** Every figure
-above is a projection, computed before there was an encoder, and against a
-baseline that had no run break in Section 11.1 and a cruder passthrough. With
-those in place `ZRUN` already takes most of what the chained classes were
-credited with, and measured against the same encoder with the eight classes
-switched off:
-
-| | with the chained gaps | without | cost |
+| | with them | without | cost |
 |---|---|---|---|
 | core corpus, no compressor | 0.97831 | 0.98354 | +0.53 % |
 | Silesia, no compressor | 1.03635 | 1.03792 | +0.15 % |
 | short corpus | 0.9252 | 0.9252 | none |
-| any corpus, compression on | — | — | none, they are never reached |
+| any corpus, compression on | — | — | none, never reached |
 
-Not 1.56 % but 0.15 %, and on two files of twenty-five: `_cffi_backend.so` at
-3.27 % and `mozilla` at 0.70 %. On `mr` the encoder is *better* without them,
-which is the greedy ranking of Section 11.3 taking a worse path when offered a
-better local one.
-
-Eight classes and the most involved grammar in this document, for that. It is
-recorded here rather than argued because the decision belongs to whoever reads
-it: Section 18.7 says why the design is the shape it is, and this says what the
-shape is worth.
+Eight of the forty-four classes and the most involved grammar in the document,
+for 0.15 % on the corpus that has the pattern they were designed around. The
+gain landed on two files of twenty-five, and on a third the encoder was better
+without them. Section 18.7 keeps the design argument, which was sound; what was
+wrong was the projection that justified building it, made before there was an
+encoder and against a baseline that had no run break in Section 11.1. Once
+`ZRUN` could be reached from inside a passthrough prefix it took most of what
+the chained classes had been credited with.
 
 ### 17.8 With a compressor, on both sides
 
@@ -1784,12 +1719,13 @@ the classes are not one option of two — they are the only thing there is. Even
 *with* compression applied wherever it wins, dropping the run classes costs
 3.0 % over the short corpus.
 
-**`ZMIX` can go.** It costs 0.53 % on the core corpus and 0.15 % on Silesia
+**`ZMIX` could go, and has.** It cost 0.53 % on the core corpus and 0.15 % on Silesia
 without a compressor, nothing at all on the short corpus, and nothing anywhere
 with compression on; its throughput is neutral. Against that stand eight of the
-forty-four classes, the chain grammar of Section 10.3, canonicity rule 8, an
-error code, and Sections 17.7 and 18.7. Its whole measured gain is on two files
-of twenty-five, and on a third the encoder is better without it.
+forty-four classes, the chain grammar, a canonicity rule and an error code. Its
+whole measured gain was on two files of twenty-five, and on a third the encoder
+was better without it. It has since been removed; Sections 17.7 and 18.7 are
+the record.
 
 Two faults were found while measuring this, and both were in the encoder rather
 than the format. `encode_smart` compressed payloads of any size, which put the
@@ -1909,14 +1845,27 @@ The packed bases of Section 9 are what remains once that constraint is applied:
 they exploit the only redundancy that needs no shared knowledge, which is that
 the input alphabet is smaller than the output alphabet.
 
-### 18.7 A gap width in a field
+### 18.7 Chained gaps, and why they were removed again
 
-Section 10.3 spends eight classes on eight gap widths rather than one class and a
-field. The field is the obvious design and it is the worse one, because the whole
-gain of merging two run segments is the signal pair it saves — one or two
-characters after rounding — and a field naming the width costs one of them
-straight back. Section 17.7 measures both: the field version keeps a third of the
-gain, and leaves the core corpus behind Base85N where the class version passes it.
+Zero runs separated by gaps of one fixed width are the shape of a symbol table,
+and eight classes once carried the whole alternation in one segment. Two things
+about that design were right and are worth keeping written down. Chaining beats
+pairing: a class carrying exactly two runs and one gap swallows only every other
+boundary of an alternating sequence. And the gap width belongs in the class
+number rather than in a field, because the entire gain of a merge is the signal
+pair it saves, and a field naming the width costs one of those two characters
+straight back.
+
+What was wrong was the size of the prize. Section 17.7 has the measurement: the
+classes were built on a projection of 1.56 % over both corpora, made before
+there was an encoder, and the encoder says 0.15 % on Silesia and nothing at all
+on short payloads or with compression on. The projection's baseline had no run
+break in Section 11.1; once `ZRUN` could be reached from inside a passthrough
+prefix, it took most of what the chained classes had been credited with.
+
+Eight classes, a chain grammar, a canonicity rule and an error code, for that.
+The lesson is not about gaps: it is that a projection is a reason to build a
+prototype, not a reason to build a feature.
 
 ### 18.8 More than one R-Set
 
@@ -1999,15 +1948,14 @@ an hour rather than a week, these are where it is best spent:
 * the pair-space argument in Section 5.2, on which all signalling rests;
 * the flush derivation in Section 7.2, the escape's `hi` in 7.1, and the length
   tiers in 7.3;
-* the padding and index rules in Section 9, and the chain structure in 10.3,
-  which are the only new decode paths;
+* the padding and index rules in Section 9, which are the only new decode
+  path;
 * the never-worse-than-block-mode guarantee in Section 11.2;
 * the allocation bounds in Section 16, runs included and not only frames.
 
 Two things we already know are open, and would rather hear about early than
 late. The measurement caveat at the head of Section 17 is a release blocker
-rather than a footnote: Sections 9, 10.2 and 10.3 carry projections rather than
-measurements, the donor profiles must be re-derived for the changed R-Set
+rather than a footnote: the donor profiles must be re-derived for the changed R-Set
 (Section 17.5), and neither corpus can say anything about the packed classes
 (Section 17.15). And no implementation has yet encoded a byte against this
 document, so every claim in it is an argument rather than a result.
