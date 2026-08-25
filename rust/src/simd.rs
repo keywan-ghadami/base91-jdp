@@ -16,10 +16,16 @@
 //! * [`run_end`] -- how far a run of one repeated byte reaches. The run
 //!   classes of specification section 10.2 are the measured win of 0.4.0, and
 //!   finding a run is a comparison against a splat.
-//! [`SkipSet`] is the same idea applied to the passthrough prefix scan, and it
-//! is **not wired in, because it was measured and it loses.** Four
-//! arrangements were tried on the core corpus against the scalar scan at
-//! 30-114 MB/s:
+//! [`dead_span`] is the one that pays, and it pays where it matters most: a
+//! compressed payload has no runs, no packed alphabet and no passthrough, so
+//! the scan of specification section 11.1 is entered once per byte and finds
+//! nothing once per byte. Measured on high-entropy input, the block coder
+//! alone runs at 323 MB/s and the whole encoder at 31 -- five sixths of the
+//! time is a scan that fails.
+//!
+//! [`SkipSet`] is the same idea applied to the *passthrough* prefix scan, and
+//! it is **not wired in, because it was measured and it loses.** Four
+//! arrangements were tried against the scalar scan at 30-114 MB/s:
 //!
 //! | arrangement | result |
 //! |---|---|
@@ -29,24 +35,19 @@
 //! | ... and a guard against retrying the probe per byte | 18-87 MB/s |
 //! | set rebuilt as the segment's state changes | 2-83 MB/s |
 //!
-//! The reason is the format, not the code. A vector probe pays when it settles
-//! many bytes per call, and the bytes that stop this one -- the R-Set members
-//! and the donors -- are precisely the frequent characters of the text the
-//! scan runs on. Making the set dynamic lengthens the skips and costs a
-//! 128-entry rebuild every time a literal lowers a donor rank, which on prose
-//! is often. The scalar loop's six L1 lookups per byte are simply hard to beat
-//! here.
+//! The two results are not in tension, they are the same lesson from both
+//! sides. A vector probe pays when it settles many bytes per call. Asking "can
+//! anything start in the next thirty-two bytes" of a compressed payload
+//! settles all thirty-two, every time. Asking "does the next byte change the
+//! passthrough state" of English text settles two or three, because the bytes
+//! that stop it -- the R-Set members and the donors -- are precisely the
+//! frequent characters of the text the scan runs on.
 //!
-//! What would be worth trying next is vectorising the *donor bookkeeping*
-//! rather than skipping it: the four per-profile minima are four bytes, one
-//! `u32` lane each, and `min` across them is one instruction. That is Base85N's
-//! section 11.2, and it accelerates the work instead of trying to avoid it.
-//!
-//! The membership test is the nibble-pair lookup simdjson uses: byte `b` is in
-//! the set iff bit `b >> 4` of `lo[b & 15]` is set. Sixteen bytes describe any
-//! subset of ASCII, and bytes at or above 127 index a zero in [`NIBBLE_BITS`],
-//! so they always stop the skip -- which they must, since none of them is
-//! representable in passthrough at all.
+//! What would be worth trying for passthrough is vectorising the *donor
+//! bookkeeping* rather than skipping it: the four per-profile minima are four
+//! bytes, one `u32` lane each, and `min` across them is one instruction. That
+//! is Base85N's section 11.2, and it accelerates the work instead of trying to
+//! avoid it.
 
 use std::simd::cmp::SimdPartialEq;
 use std::simd::u8x32;
@@ -186,3 +187,120 @@ impl SkipSet {
         i
     }
 }
+
+// ---------------------------------------------------------------------------
+// The dead span
+// ---------------------------------------------------------------------------
+
+/// How many positions from `at` can provably open no segment at all, so that
+/// the scan need not be run at any of them.
+///
+/// **This is where the vector work pays**, and it is the case a compressed
+/// payload is: no run, no packed class, no passthrough, so the scan of
+/// section 11.1 is entered once per byte and fails once per byte. Measured on
+/// high-entropy input, the block coder alone runs at 256 MB/s and the whole
+/// encoder at 36 -- seven eighths of the time is a scan that finds nothing.
+///
+/// The test is three questions over thirty-two bytes, and it is deliberately
+/// conservative: a "yes" only ever means *scan here after all*.
+///
+/// * **A run needs two equal adjacent bytes.** `ZRUN` pays from two bytes up,
+///   so any repeat at all makes a position worth scanning.
+/// * **A packed base needs five bytes of one class** (four costs seven
+///   characters where block mode costs six). Runs of four bytes that are in
+///   *any* packed class are looked for instead, which is weaker and therefore
+///   safe.
+/// * **Passthrough needs ten carriable bytes** (nine ties, and a tie goes to
+///   block mode by canonicity rule 2). Runs of eight are looked for.
+///
+/// A run of `k` set bits is found by folding the mask into itself: `m & m>>1`
+/// leaves the runs of two, and two more steps leave the runs of eight.
+///
+/// Only `LANES - MARGIN` positions are returned, because a run that begins
+/// near the end of the window may continue past it and this function can see
+/// only what it loaded.
+pub fn dead_span(data: &[u8], at: usize) -> usize {
+    const MARGIN: usize = 10;
+    let mut end = at;
+    // Windows are walked as long as they stay dead, so a long stretch of
+    // compressed bytes costs one probe per thirty-two and pays the margin once
+    // rather than per window. Stopping at the first live window and backing off
+    // by the margin is what keeps the answer conservative: a run that begins
+    // inside the last window may continue past what was loaded.
+    while end + LANES + 1 <= data.len() {
+        if !window_is_dead(data, end) {
+            break;
+        }
+        end += LANES;
+    }
+    if end <= at + MARGIN {
+        return 0;
+    }
+    end - MARGIN - at
+}
+
+#[inline]
+fn window_is_dead(data: &[u8], at: usize) -> bool {
+    let chunk = V::from_slice(&data[at..at + LANES]);
+    // One byte past the window is loaded too: a run that begins on the
+    // window's last byte has to be seen.
+    let next = V::from_slice(&data[at + 1..at + 1 + LANES]);
+    if chunk.simd_eq(next).to_bitmask() != 0 {
+        return false;
+    }
+    if runs_of_8(membership(chunk, &CARRIABLE32)) != 0 {
+        return false;
+    }
+    runs_of_4(membership(chunk, &PACKED_ANY32)) == 0
+}
+
+/// One bit per lane: is this byte in the set the nibble table describes.
+#[inline]
+fn membership(chunk: V, lo32: &[u8; LANES]) -> u64 {
+    let lo = V::from_array(*lo32);
+    let hi = V::from_array(NIBBLE32);
+    let lo_sel = lo.swizzle_dyn(chunk & V::splat(0x0F));
+    let hi_sel = hi.swizzle_dyn((chunk >> V::splat(4)) & V::splat(0x0F));
+    let miss = (lo_sel & hi_sel).simd_eq(V::splat(0)).to_bitmask();
+    !miss & (u64::MAX >> (64 - LANES))
+}
+
+#[inline]
+fn runs_of_4(m: u64) -> u64 {
+    let m = m & (m >> 1);
+    m & (m >> 2)
+}
+
+#[inline]
+fn runs_of_8(m: u64) -> u64 {
+    let m = m & (m >> 1);
+    let m = m & (m >> 2);
+    m & (m >> 4)
+}
+
+/// Nibble-pair tables over the bytes below 128. Everything at or above 128
+/// indexes a zero in [`NIBBLE_BITS`] and is therefore never a member, which is
+/// correct for both sets here: neither holds one.
+const CARRIABLE32: [u8; LANES] = dup({
+    let mut lo = [0u8; 16];
+    let mut b = 0usize;
+    while b < 128 {
+        if crate::tables::PT_CARRIABLE[b] {
+            lo[b & 15] |= 1 << (b >> 4);
+        }
+        b += 1;
+    }
+    lo
+});
+
+const PACKED_ANY32: [u8; LANES] = dup({
+    let mut lo = [0u8; 16];
+    let mut b = 0usize;
+    while b < 128 {
+        if crate::tables::PACKED_MEMBERSHIP[b] != 0 {
+            lo[b & 15] |= 1 << (b >> 4);
+        }
+        b += 1;
+    }
+    lo
+});

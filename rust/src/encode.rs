@@ -130,6 +130,10 @@ impl Encoder {
 /// Encode `data` as a complete stream.
 pub fn encode(data: &[u8]) -> String {
     let mut enc = Encoder::new();
+    // The block coder is the ceiling (section 11.2), so this is enough for any
+    // input and the character pushes below never check capacity again. Without
+    // it the encoder spends more time growing its buffer than scanning.
+    enc.out.reserve(2 * (8 * data.len() + 12) / 13 + 2);
     encode_into(&mut enc, data, true);
     // Every byte emitted is an alphabet character, so this is ASCII by
     // construction; the check is one pass and only in debug builds.
@@ -175,9 +179,39 @@ pub fn encode_region_until(
     commit_until: usize,
     resync: &[(usize, usize)],
 ) -> (usize, Option<usize>) {
+    // The sweep knobs are read once per call, not per byte: a relaxed load is
+    // cheap but it is opaque to the optimiser, and reading it in the hot loop
+    // was costing more than the scan it gates.
+    let min_binary_run = tuning::binary_run();
     let mut i = start;
     while i < commit_until {
-        let cand = if enc.binary_run >= tuning::binary_run() {
+        // Ask once for a whole window whether anything can start in it. On a
+        // compressed payload the answer is always no, and the scan below --
+        // which is five sixths of the encoder's time on such input -- is
+        // skipped for twenty-two positions at a time.
+        #[cfg(feature = "simd")]
+        // One scalar test before the vector one. Where the byte under the
+        // cursor is itself carriable, or repeats its neighbour, the window
+        // cannot be dead and the probe would load thirty-two bytes to say so.
+        // Structured binary -- a font, an object file -- is full of such
+        // positions, and without this guard the probe costs more there than it
+        // saves elsewhere.
+        if !PT_CARRIABLE[data[i] as usize]
+            && PACKED_MEMBERSHIP[data[i] as usize] == 0
+            && (i + 1 >= data.len() || data[i] != data[i + 1])
+        {
+            let dead = crate::simd::dead_span(data, i);
+            if dead > 0 {
+                let end = (i + dead).min(commit_until);
+                for &b in &data[i..end] {
+                    enc.acc.push(b as u32, 8, &mut enc.out);
+                }
+                enc.binary_run += end - i;
+                i = end;
+                continue;
+            }
+        }
+        let cand = if enc.binary_run >= min_binary_run {
             scan(data, i, enc.acc.n)
         } else {
             None
@@ -206,12 +240,25 @@ pub fn encode_region_until(
     (i, None)
 }
 
+/// The block coder with the scan switched off: what encoding costs when no
+/// class can carry anything, which is what a compressed payload looks like.
+pub fn block_only(data: &[u8]) -> String {
+    let mut acc = Acc::new();
+    let mut out = Vec::with_capacity(data.len() * 2);
+    for &b in data {
+        acc.push(b as u32, 8, &mut out);
+    }
+    acc.finish(&mut out);
+    unsafe { String::from_utf8_unchecked(out) }
+}
+
 // ---------------------------------------------------------------------------
 // The candidate scan
 // ---------------------------------------------------------------------------
 
 /// The cheapest segment that can open at `at`, or none if block mode wins.
 fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
+    let families = tuning::families();
     let overhead = 2 + flush_chars(n); // signal, flush
     let mut best: Option<Candidate> = None;
 
@@ -236,7 +283,7 @@ fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
     };
 
     // --- runs, and runs with gaps -----------------------------------------
-    let run = run_length(data, at);
+    let run = if families & tuning::F_RUN != 0 { run_length(data, at) } else { 0 };
     if run >= 2 {
         let capped = run.min(MAX_SEGMENT_BYTES);
         if data[at] == 0 {
@@ -262,7 +309,11 @@ fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
     }
 
     // --- packed bases ------------------------------------------------------
-    let mut live = PACKED_MEMBERSHIP[data[at] as usize];
+    let mut live = if families & tuning::F_PACKED != 0 {
+        PACKED_MEMBERSHIP[data[at] as usize]
+    } else {
+        0
+    };
     if live != 0 {
         // One pass over the input, narrowing the set of classes still alive,
         // records where each class had to stop.
@@ -312,8 +363,10 @@ fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
     }
 
     // --- passthrough -------------------------------------------------------
+    if families & tuning::F_PT != 0 {
     if let Some(c) = scan_passthrough(data, at, overhead) {
         consider(c);
+    }
     }
 
     best

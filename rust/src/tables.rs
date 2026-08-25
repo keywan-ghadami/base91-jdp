@@ -64,11 +64,25 @@ pub mod tuning {
     pub fn run_break(zero: bool) -> usize {
         if zero { ZERO_RUN.load(Relaxed) } else { NONZERO_RUN.load(Relaxed) }
     }
+    /// Which candidate families the scan considers. For the benchmark only:
+    /// turning one off changes the encoding, so this is not a knob a caller
+    /// has, only a way to find out where the time goes.
+    pub static FAMILIES: AtomicUsize = AtomicUsize::new(0b111);
+    pub const F_RUN: usize = 1;
+    pub const F_PACKED: usize = 2;
+    pub const F_PT: usize = 4;
+
+    #[inline]
+    pub fn families() -> usize {
+        FAMILIES.load(Relaxed)
+    }
+
     /// Put every threshold back where the specification has it.
     pub fn reset() {
         BINARY_RUN.store(super::MIN_BINARY_RUN, Relaxed);
         ZERO_RUN.store(super::MIN_RUN_IN_SEGMENT, Relaxed);
         NONZERO_RUN.store(super::MIN_NONZERO_RUN_IN_SEGMENT, Relaxed);
+        FAMILIES.store(0b111, Relaxed);
     }
 }
 pub const MAX_SEGMENT_BYTES: usize = 65_536;

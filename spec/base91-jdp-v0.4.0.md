@@ -1312,12 +1312,41 @@ of chunks, and repairing a whole chunk when it did not left the parallel encoder
 *slower* than the serial one. Bounding the repair at the first segment boundary
 both paths reach is the difference between that and the table above.
 
-**The `simd` feature is not yet worth its flag.** Vectorising the run scan is
-neutral, and four arrangements of a vector fast-forward for the passthrough
-prefix scan all measured slower than the scalar loop. `rust/src/simd.rs`
-records each of them and why: the bytes that stop such a skip are the R-Set
-members and the donors, which are exactly the frequent characters of the text
-the scan runs on, so the skips are too short to pay for the probe.
+**What the scan costs, and what a vector unit can do about it.** On input no
+class can carry -- which is what a compressed payload is -- the block coder
+alone runs at 323 MB/s and the whole encoder at 31. Five sixths of the time is
+the candidate scan of Section 11.1, entered once per byte and finding nothing
+once per byte.
+
+The question the scan answers per byte can be answered per *window*: no run of
+two equal bytes, no four bytes of one packed alphabet, no eight carriable bytes
+in the next thirty-two means nothing can open at any of the first twenty-two
+positions. That is three comparisons over a vector register, and it is
+conservative by construction -- it can only ever say "scan here after all".
+
+| input | scalar | with the probe | |
+|---|---|---|---|
+| high-entropy synthetic | 31 MB/s | 64 MB/s | 2.06× |
+| `grace_hopper.jpg` | 32 MB/s | 62 MB/s | 1.94× |
+| `sql-wasm.wasm` | 36 MB/s | 62 MB/s | 1.72× |
+| `minduka_present.png` | 37 MB/s | 59 MB/s | 1.59× |
+| `commonmark-spec.txt` | 87 MB/s | 103 MB/s | 1.18× |
+| `DejaVuSans.ttf` | 31 MB/s | 30 MB/s | 0.97× |
+
+This is a property of the format, not of one implementation: the three
+thresholds the probe tests against are Sections 10.2, 9 and 11.1, and any
+encoder can batch the same question. It is also the answer to why the scan is
+not simply run once at the start of a stream — Section 14.1's decision point
+holds only while the input is one kind of thing, and a `tar`, whose text
+headers, binary members and zero padding alternate every few hundred bytes, is
+the standing counterexample. Its ratio of 0.7528 is what switching classes
+mid-stream buys; one decision at the head would give it 1.0 or 1.2308.
+
+The same probe applied to the passthrough prefix scan loses, in four
+arrangements; `rust/src/simd.rs` records each with its number. The bytes that
+stop *that* skip are the R-Set members and the donors, which are the frequent
+characters of the text it runs on, so it settles two or three bytes per call
+where the dead-span probe settles thirty-two.
 
 ### 17.11 What is left on the table
 

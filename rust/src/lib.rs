@@ -35,6 +35,12 @@ mod symbols;
 #[cfg(feature = "simd")]
 pub mod simd;
 
+/// Entry points the benchmarks use to time one layer at a time. Not part of
+/// the format, and not a stable interface.
+pub mod bench {
+    pub use crate::encode::block_only;
+}
+
 pub use decode::{decode, decode_bounded};
 pub use encode::encode;
 pub use error::{Code, Error, Result};

@@ -157,6 +157,7 @@ struct Part {
 
 fn worker(data: &[u8], from: usize, to: usize) -> Part {
     let mut enc = Encoder::new().recording();
+    enc.out.reserve(2 * (8 * (to - from) + 12) / 13 + 2);
     let end_input = encode_region(&mut enc, data, from, to);
     Part {
         end: enc.state(),

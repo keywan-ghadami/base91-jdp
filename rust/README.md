@@ -60,13 +60,35 @@ repair at the first segment boundary both paths reach gives 2 to 3.5× on four
 threads, with output byte-identical to a serial encode — asserted by the tests
 at four chunk sizes, down to a single symbol group.
 
-**The `simd` feature does not pay yet**, and the flag stays off by default for
-that reason. Vectorising the run scan is neutral. Four arrangements of a vector
-fast-forward for the passthrough prefix scan all measured slower than the
-scalar loop, because the bytes that stop such a skip — the R-Set members and
-the donors — are precisely the frequent characters of the text the scan runs
-on. `src/simd.rs` records each arrangement, its number, and what would be worth
-trying next.
+**The `simd` feature pays where compressed data is.** The candidate scan, not
+the packing, is what costs: on high-entropy input the block coder alone runs at
+323 MB/s and the whole encoder at 31, because the scan of section 11.1 is
+entered once per byte and finds nothing once per byte. One vector step answers
+"can anything start in the next thirty-two bytes" for the whole window, and
+windows are walked while they stay dead, so a long compressed stretch costs one
+probe per thirty-two bytes.
+
+| input | stable | `--features simd` | |
+|---|---|---|---|
+| high-entropy synthetic | 31 MB/s | 64 MB/s | 2.06× |
+| grace_hopper.jpg | 32 MB/s | 62 MB/s | 1.94× |
+| sql-wasm.wasm | 36 MB/s | 62 MB/s | 1.72× |
+| minduka_present.png | 37 MB/s | 59 MB/s | 1.59× |
+| commonmark-spec.txt | 87 MB/s | 103 MB/s | 1.18× |
+| lodash.js | 82 MB/s | 93 MB/s | 1.13× |
+| DejaVuSans.ttf | 31 MB/s | 30 MB/s | 0.97× |
+
+The same probe applied to the *passthrough* prefix scan loses, in four
+arrangements, and `src/simd.rs` records each with its number. The two results
+are the same lesson from both sides: a vector probe pays when it settles many
+bytes per call, and "can anything start here" settles thirty-two of a
+compressed payload every time where "does this byte change the passthrough
+state" settles two or three of English text.
+
+A scalar guard in front of the probe is what removes the regression on
+structured binary: where the byte under the cursor is itself carriable or
+repeats its neighbour, the window cannot be dead and loading it to find that
+out is waste. Without the guard `DejaVuSans.ttf` ran at 0.84×.
 
 ## A feature flag for more speed
 
