@@ -1746,6 +1746,59 @@ it is unreachable code that costs nothing because it is never entered.
   That requires a normative statement about where the hyphens go, which is a
   different kind of assumption from "these bytes are hex".
 
+### 17.19 If compression were mandatory, could the run classes go?
+
+The question is fair — Section 17.18 shows no class is reached on a long
+payload once compression decides — and the answer separates. Size and
+throughput together, on every path a mandatory compressor leaves:
+
+| path | with the runs | without `ZMIX` | without any run class |
+|---|---|---|---|
+| short, below the crossover | 0.9252 · 66 MB/s | 0.9252 · 68 MB/s | 0.9681 · 59 MB/s |
+| short, compressing where it wins | 0.9143 · 35 MB/s | 0.9143 · 33 MB/s | 0.9416 · 33 MB/s |
+| core, compressing at −5 | 0.5227 · 394 MB/s | 0.5227 · 395 MB/s | 0.5227 · 390 MB/s |
+| core, compressing at 3 | 0.3444 · 191 MB/s | 0.3444 · 189 MB/s | 0.3444 · 186 MB/s |
+| core, no compressor available | 0.9783 · 52 MB/s | 0.9835 · 51 MB/s | 1.1372 · 40 MB/s |
+
+**`ZRUN` and `RUN` cannot go, and the throughput column is the reason nobody
+would guess.** Taking them out makes the encoder *slower*: 52 MB/s to 40 on the
+core corpus, 66 to 59 on the short one. A run class consumes eighty-nine bytes
+for three characters in a single step, where passthrough would walk them one at
+a time and block mode would spend 1.2308 each. They are not a cost the scan
+pays, they are the scan's cheapest exit.
+
+They also still pay in size where a compressor cannot reach, which mandatory
+compression does not change, because a mandatory compressor is not an
+unconditional one. Below the crossover a frame header is a large fraction of
+the payload:
+
+| payload | plain | zstd −5 | |
+|---|---|---|---|
+| 54 bytes of repeated JSON | 1.056 | 1.500 | plain |
+| 108 bytes | 1.046 | 0.861 | zstd |
+| 64-byte zero-padded record | 0.469 | 0.609 | plain |
+| 128 bytes of the same | 0.469 | 0.320 | zstd |
+
+Compression starts winning somewhere around a hundred bytes, and beneath that
+the classes are not one option of two — they are the only thing there is. Even
+*with* compression applied wherever it wins, dropping the run classes costs
+3.0 % over the short corpus.
+
+**`ZMIX` can go.** It costs 0.53 % on the core corpus and 0.15 % on Silesia
+without a compressor, nothing at all on the short corpus, and nothing anywhere
+with compression on; its throughput is neutral. Against that stand eight of the
+forty-four classes, the chain grammar of Section 10.3, canonicity rule 8, an
+error code, and Sections 17.7 and 18.7. Its whole measured gain is on two files
+of twenty-five, and on a third the encoder is better without it.
+
+Two faults were found while measuring this, and both were in the encoder rather
+than the format. `encode_smart` compressed payloads of any size, which put the
+short corpus at 1.5250 characters per byte — worse than Base64 — where building
+both candidates gives 0.9143; below a few kilobytes the comparison is cheap and
+the entropy sample is guessing, so it is made rather than skipped. And a fresh
+compression context was built per call, which on field-sized payloads is the
+entire cost: reusing one took the short corpus from 2 MB/s to 35.
+
 ---
 
 ## 18. What was considered and left out (informative)

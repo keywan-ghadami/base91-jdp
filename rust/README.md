@@ -212,6 +212,20 @@ together leaves the ratio at 0.52273 either way. The machinery earns its place
 in two situations and no others: a payload too short for a compressor to have a
 window, and a caller who cannot or will not link one.
 
+**Could the run classes go, if compression were mandatory?** `ZRUN` and `RUN`
+cannot, and throughput is the reason nobody would guess: taking them out makes
+the encoder *slower*, 52 MB/s to 40 on the core corpus and 66 to 59 on the
+short one. A run class consumes eighty-nine bytes for three characters in one
+step; it is not a cost the scan pays, it is the scan's cheapest exit. They also
+still pay in size below the compression crossover, which is around a hundred
+bytes — even with compression applied wherever it wins, dropping them costs
+3.0 % over the short corpus.
+
+`ZMIX` can. It is worth 0.53 % on the core corpus and 0.15 % on Silesia without
+a compressor, nothing on the short corpus, nothing with compression, and its
+throughput is neutral — against eight of the forty-four classes and the chain
+grammar. See section 17.19.
+
 What the ablation *did* remove is three classes: `DEC`, `ALPHA_U` and `ALNUM`,
 whose alphabets are contained in `HEXL`, `B32` and `B64` at the same width. A
 subset at equal width can never produce a shorter segment, and dropping all

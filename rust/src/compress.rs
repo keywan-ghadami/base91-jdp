@@ -28,18 +28,50 @@ use crate::tables::{CLASS_ZSTD, SIGNAL_MIN};
 /// Payload per frame. Section 17.9 is why it is not the whole input.
 pub const FRAME_PAYLOAD: usize = 1 << 20;
 
+/// Below this, both candidates are built rather than one chosen. Building
+/// both is cheap on a small input and the entropy sample is unreliable there;
+/// above it the comparison is what costs. The crossover where a frame starts
+/// to win at all is around a hundred bytes on real payloads, so this is
+/// generous by a factor of forty.
+pub const COMPARE_BELOW: usize = 4096;
+
 /// A conservative ceiling on what one frame may expand to on decode, used
 /// where the frame declares no content size. Specification section 16: the
 /// expansion is attacker-controlled and the ceiling belongs on the total.
 pub const DEFAULT_EXPANSION_LIMIT: usize = 1 << 30;
 
+thread_local! {
+    /// One compressor per thread, kept between calls.
+    ///
+    /// `zstd::bulk::Compressor` holds the context zstd would otherwise
+    /// allocate and initialise per frame, and on a field-sized payload that
+    /// setup is the entire cost: building one per call put the short corpus at
+    /// 2 MB/s, where the frames themselves are a few dozen bytes each. Keyed
+    /// by level, because changing the level means a new context anyway.
+    static COMPRESSOR: std::cell::RefCell<Option<(i32, zstd::bulk::Compressor<'static>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn with_compressor<T>(
+    level: i32,
+    f: impl FnOnce(&mut zstd::bulk::Compressor<'static>) -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    COMPRESSOR.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let reuse = matches!(&*slot, Some((l, _)) if *l == level);
+        if !reuse {
+            *slot = Some((level, zstd::bulk::Compressor::new(level)?));
+        }
+        f(&mut slot.as_mut().unwrap().1)
+    })
+}
+
 /// Encode as compressed segments, without weighing them against anything.
 pub fn encode_zstd(data: &[u8], level: i32) -> std::io::Result<String> {
     let mut enc = Encoder::new();
     enc.out.reserve(2 * (8 * data.len() + 12) / 13 + 64);
-    let mut compressor = zstd::bulk::Compressor::new(level)?;
     for chunk in data.chunks(FRAME_PAYLOAD) {
-        let frame = compressor.compress(chunk)?;
+        let frame = with_compressor(level, |c| c.compress(chunk))?;
         // The signal, with an empty flush field: block mode is at a group
         // boundary before the first segment and after every one.
         let mut out = std::mem::take(&mut enc.out);
@@ -78,6 +110,16 @@ pub fn encode_auto(data: &[u8], level: i32) -> std::io::Result<String> {
 /// The threshold is [`crate::detect::ENTROPY_BITS`], unchanged. On the core
 /// corpus it agrees with `encode_auto` on all thirteen files.
 pub fn encode_smart(data: &[u8], level: i32) -> std::io::Result<String> {
+    if data.len() < COMPARE_BELOW {
+        // Small enough that the comparison of section 11.2 is free, and small
+        // enough that the entropy sample would be guessing. Below the
+        // crossover a frame header is a large fraction of the payload and
+        // compression loses badly -- 1.5250 characters per byte over the short
+        // corpus against 0.9252 -- so this is not an optimisation but a
+        // correctness fix: an encoder that compresses everything produces
+        // output worse than Base64 on a field-sized payload.
+        return encode_auto(data, level);
+    }
     if crate::detect::is_block(data, true) {
         // Already compressed, or close enough that nothing will come off it.
         // The plain path then costs nothing either: section 11.5 skips the
@@ -91,10 +133,9 @@ pub fn encode_smart(data: &[u8], level: i32) -> std::io::Result<String> {
 /// than [`encode_zstd`] by the packing, which is what an encoder wanting only
 /// the comparison of section 11.2 needs.
 pub fn zstd_chars(data: &[u8], level: i32) -> std::io::Result<usize> {
-    let mut compressor = zstd::bulk::Compressor::new(level)?;
     let mut chars = 0usize;
     for chunk in data.chunks(FRAME_PAYLOAD) {
-        let n = compressor.compress(chunk)?.len();
+        let n = with_compressor(level, |c| c.compress(chunk))?.len();
         chars += 2 + length_chars(n) + 2 * ((8 * n + 12) / 13);
     }
     Ok(chars)
