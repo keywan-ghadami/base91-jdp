@@ -106,3 +106,6 @@ required-features = ["zstd", "base85n"]
 [[example]]
 name = "decoderate"
 required-features = ["base85n"]
+[[example]]
+name = "scanframe"
+required-features = ["zstd", "base85n"]

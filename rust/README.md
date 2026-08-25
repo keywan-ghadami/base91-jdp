@@ -267,43 +267,58 @@ compresses where compression wins goes from 0.9252 to **0.9194** — the first
 time compression has improved that number at all.
 
 **Head to head with Base85N, both built from source.** `examples/headtohead.rs`
-runs both codecs in one process under one timing loop, so the comparison is of
-two encodings and not of two languages. Base85N has no compressor, so a build
-of this crate without zstd is the like-for-like row and the default build is
-reported separately.
+runs both codecs in one process under one timing loop. Each is measured as it
+ships: this one with its compressor, which is part of the format, and Base85N
+without one, because it has none.
 
-| core corpus | size | encode | encode, 4 threads | decode |
-|---|---|---|---|---|
-| **Base85N 0.5.1** | 1.00698 | **401 MB/s** | **412 MB/s** | **1 047 MB/s** |
-| this crate, no compressor | **0.98354** | 68 MB/s | 152 MB/s | 381 MB/s |
-| this crate, zstd −5 | **0.52271** | **457 MB/s** | | 351 MB/s |
-| this crate, zstd 3 | **0.34443** | 244 MB/s | | 457 MB/s |
-| this crate, zstd 9 | **0.31449** | 54 MB/s | | 520 MB/s |
+| core corpus | size | encode | decode |
+|---|---|---|---|
+| Base85N 0.5.1 | 1.00698 | 486 MB/s | 1 331 MB/s |
+| **this crate, zstd 1** | **0.37431** | 403 MB/s | 584 MB/s |
+| **this crate, zstd −5** | **0.52271** | **502 MB/s** | 398 MB/s |
 
-Smaller in every configuration: 2.3 % on the core corpus and 1.3 % on Silesia
-with neither side compressing, 14.2 % on the short group, 41–69 % with a
-compressor. At level −5, 48 % smaller *and* 14 % faster at once.
+Level 1 is the recommendation: 2.7× smaller at 83 % of the encode throughput.
+Level −5 is for throughput above all — half the size *and* faster, 502 against
+486 MB/s.
 
-Slower in two places. Without a compressor the encoder is six times slower,
-which is the candidate scan of section 11.1 running over every byte no class
-claims. And it decodes two to three times slower in every configuration — 91
-characters are a harder job for a byte-oriented decoder than 85, and the first
-version of this decoder was five times slower still (see below). Specification
-section 17.21 has all three corpora and the two things Base85N does that this
-format does not.
+Against what a Base85N caller would have to build to get a stream this small,
+which is zstd in front of it, given a stock frame over the whole file where
+this format chunks at a mebibyte:
 
-**Three things the decoder was doing per byte.** Measured against Base85N's,
+| level | this crate | zstd → Base85N | |
+|---|---|---|---|
+| −5 | 0.52271 | 0.50479 | +3.55 % |
+| −1 | 0.43651 | 0.42977 | +1.57 % |
+| **1** | **0.37431** | 0.37992 | **−1.48 %** |
+| 3 | **0.34443** | 0.34897 | **−1.30 %** |
+| 9 | **0.31449** | 0.31830 | **−1.20 %** |
+
+Ahead from level 1 up, behind below it, and specification section 10.1 now says
+why: zstd's negative levels leave literals uncoded, so source text survives into
+the frame where Base85N's passthrough reaches it and block mode is forbidden to
+look. `examples/scanframe.rs` prices what that costs — 2.71 % at −5, 0.04 % at
+3 — and section 17.22 says why it is not taken.
+
+**Four things the decoder was doing per byte.** Measured against Base85N's,
 this one was five times slower on text, and none of it was the format.
 `significant` copied the whole stream into a fresh vector to strip whitespace
 that no stream this encoder produces contains — it now scans branchlessly and
-borrows, and a JPEG went from 384 MB/s to 810. Passthrough walked the eight
-R-Set positions per byte to answer what a 256-entry table answers in one
-lookup; the table is built once for the stream and each segment lends it at
-most eight entries, and CSS went from 240 MB/s to 645. And block mode had no
-bulk path at all where the encoder has had one from the start: sixteen
-characters are eight pairs are thirteen bytes, assembled in one `u128`, written
-once, with the ceiling checked per group instead of per byte. Together, 213
-MB/s to 381 on the core corpus.
+borrows. Passthrough walked the eight R-Set positions per byte to answer what a
+256-entry table answers in one lookup, and built a donor table in a second pass
+that is now folded into the first. And block mode had no bulk path at all where
+the encoder has had one from the start: sixteen characters are eight pairs are
+thirteen bytes, assembled in one `u128` and written as one unaligned store,
+with bounds, capacity and ceiling established once for a whole run of groups.
+
+| | before | after |
+|---|---|---|
+| `grace_hopper.jpg`, all block mode | 405 MB/s | **1 017 MB/s** |
+| `bootstrap.css`, all passthrough | 240 MB/s | **1 043 MB/s** |
+| `requests-history.md` | 199 MB/s | **787 MB/s** |
+| core corpus, no compressor | 213 MB/s | **543 MB/s** |
+
+What remains is structural: the files that stay slowest are the ones with the
+most segments, where the per-segment fixed cost is spread over a few bytes.
 
 **Where compression starts to pay.** `examples/firstwin.rs` sweeps it byte by
 byte, against the whole plain encoder rather than against block mode:

@@ -87,29 +87,33 @@ compression.
 
 ## Head to head with Base85N
 
-Both implementations built from source and run in one process under one timing
-loop, so the comparison is of two encodings and not of two languages
+Each codec as it ships: this one with its compressor, which is part of the
+format, and Base85N without one, because it has none. Both built from source
+and run in one process under one timing loop, so the comparison is of two
+encodings and not of two languages
 ([`rust/examples/headtohead.rs`](rust/examples/headtohead.rs), specification
-Section 17.21). Base85N has no compressor, so the two configurations are
-reported separately and should not be read as one.
+Section 17.21).
 
 | core corpus | size | encode | decode |
 |---|---|---|---|
-| **Base85N** | 1.00698 | **401 MB/s** | **1 047 MB/s** |
-| base91-jdp, no compressor | **0.98354** | 68 MB/s | 381 MB/s |
-| base91-jdp, zstd −5 | **0.52271** | **457 MB/s** | 351 MB/s |
-| base91-jdp, zstd 9 | **0.31449** | 54 MB/s | 520 MB/s |
+| Base85N 0.5.1 | 1.00698 | 486 MB/s | 1 331 MB/s |
+| **base91-jdp, zstd 1** | **0.37431** | 403 MB/s | 584 MB/s |
+| **base91-jdp, zstd −5** | **0.52271** | **502 MB/s** | 398 MB/s |
 
-**Smaller in every configuration** — 2.3 % on the core corpus and 1.3 % on
-Silesia with no compressor on either side, 14.2 % on field-length payloads, and
-41 % to 69 % with one. **At level −5, 48 % smaller and 14 % faster at the same
-time**, which is the setting a caller picks when they want speed.
+**Level 1 is the recommendation: 2.7 times smaller at 83 % of the encode
+throughput.** At level −5, for a caller who wants throughput above all,
+**half the size and faster at the same time** — 502 MB/s against 486. That is
+not a paradox: compressing first hands the container a payload with nothing in
+it to scan, and the container then runs at three gigabytes a second.
 
-**Slower in two places, and both are real.** Without a compressor this encoder
-is six times slower, because the candidate scan runs over every byte no class
-claims. And it decodes two to three times slower in every configuration; 91
-characters give a byte-oriented decoder a harder job than 85, and that is the
-price of the density rather than a bug left to fix.
+On Silesia the same shape. On 55 field samples under 200 bytes, where no
+compressor has a window, 0.92524 against 1.07812 — 14.2 % smaller on the
+classes alone.
+
+**Where it is slower.** It decodes two to three times slower; 91 characters are
+a harder job for a byte-oriented decoder than 85. And a build that cannot link
+zstd encodes six times slower, because the candidate scan then runs over every
+byte — the compressed path skips the scan entirely.
 
 **Two things Base85N does that this format does not.** Its alphabet avoids the
 delimiters of several text formats, where this one is dense inside a JSON

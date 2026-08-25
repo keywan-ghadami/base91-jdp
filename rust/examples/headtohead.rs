@@ -2,35 +2,50 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! base91-jdp against Base85N, both built from source, both in this process.
+//! base91-jdp against Base85N, each in the configuration it ships with.
 //!
-//! Comparing a codec against another codec's documentation is not a
-//! comparison, and comparing a Rust implementation against a Go one measures
-//! the language. Base85N ships a Rust implementation with the same shape as
-//! this one -- a scalar path, an optional nightly vector path, a parallel
-//! encoder -- so both sides here are Rust, compiled by the same compiler at
-//! the same optimisation level, timed by the same loop, on the same bytes.
+//! Both codecs are built from source and run in this process under the same
+//! timing loop, so what is compared is two encodings and not two languages.
+//!
+//! Compression is part of this format (Section 10) and is not part of
+//! Base85N's. This benchmark therefore compares each codec as it comes: this
+//! one with its compressor, that one without. There is no configuration here
+//! that turns this format's compressor off, because a caller does not have
+//! one. What the third table adds is the other honest question -- what a
+//! Base85N caller would have to build to get a stream this small, which is
+//! zstd in front of it, and how the two compare then.
 //!
 //!     cargo run --release --features base85n --example headtohead -- bench/corpus
-//!
-//! Add `+nightly --features base85n,simd` to give both sides their vector path.
 
 use std::time::Instant;
 
-/// One encoder run over every file, timed as a whole. Boxed because the
-/// closures differ in what they capture.
-type Run<'a> = Box<dyn FnMut(&[u8]) -> usize + 'a>;
-/// The same for a decoder, which is handed a stream rather than bytes.
-type Read<'a> = Box<dyn FnMut(&str) -> usize + 'a>;
+/// One pass over every file, timed as a whole; the best of three. Rates are
+/// always over the original bytes, so a column can be read down the table.
+fn rate(total: usize, mut f: impl FnMut()) -> f64 {
+    let mut best = f64::MAX;
+    for _ in 0..3 {
+        let t = Instant::now();
+        f();
+        best = best.min(t.elapsed().as_secs_f64());
+    }
+    total as f64 / 1e6 / best
+}
 
 fn pct(a: usize, b: usize) -> String {
     format!("{:+.2} %", 100.0 * (a as f64 / b as f64 - 1.0))
 }
 
+/// zstd, then Base85N: what a caller does who wants a Base85N stream small.
+/// Given every advantage -- a stock frame over the whole file in one piece,
+/// where this format chunks at a mebibyte and pays 0.2 % for it (Section 17.9).
+fn pipeline(data: &[u8], level: i32) -> String {
+    base85n::encode(&zstd::bulk::compress(data, level).unwrap())
+}
+
 fn main() {
     let dirs: Vec<String> = std::env::args().skip(1).collect();
     let dirs = if dirs.is_empty() { vec!["bench/corpus".into()] } else { dirs };
-    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut files: Vec<Vec<u8>> = Vec::new();
     for d in &dirs {
         let mut v: Vec<_> = std::fs::read_dir(d)
             .unwrap_or_else(|e| panic!("{d}: {e} -- run python3 bench/corpus.py"))
@@ -40,128 +55,94 @@ fn main() {
             .collect();
         v.sort();
         for p in v {
-            files.push((
-                p.file_name().unwrap().to_string_lossy().into_owned(),
-                std::fs::read(&p).unwrap(),
-            ));
+            files.push(std::fs::read(&p).unwrap());
         }
     }
-    let total: usize = files.iter().map(|(_, d)| d.len()).sum();
+    let total: usize = files.iter().map(Vec::len).sum();
 
-    // Both sides decode what they encoded, on every file, before any number is
-    // reported. A ratio from an encoder whose output does not come back is
-    // not a measurement.
-    for (name, data) in &files {
-        let a = base91_jdp::encode(data);
-        assert_eq!(base91_jdp::decode(&a).unwrap(), *data, "jdp {name}");
-        let b = base85n::encode(data);
-        assert_eq!(base85n::decode(&b).unwrap(), *data, "base85n {name}");
+    // Nothing is reported that did not come back.
+    for d in &files {
+        let a = base91_jdp::encode_smart(d, 1).unwrap();
+        assert_eq!(base91_jdp::decode(&a).unwrap(), *d);
+        let b = base85n::encode(d);
+        assert_eq!(base85n::decode(&b).unwrap(), *d);
     }
 
-    println!("### Size, no compressor on either side\n");
-    println!("| file | bytes | Base85N | base91-jdp | |");
-    println!("|---|---|---|---|---|");
-    let (mut t85, mut t91) = (0usize, 0usize);
-    for (name, data) in &files {
-        let b = base85n::encode(data).len();
-        let a = base91_jdp::encode(data).len();
-        t85 += b;
-        t91 += a;
-        println!(
-            "| {name} | {} | {:.4} | **{:.4}** | {} |",
-            data.len(),
-            b as f64 / data.len() as f64,
-            a as f64 / data.len() as f64,
-            pct(a, b)
-        );
-    }
-    println!(
-        "| **total** | **{total}** | **{:.5}** | **{:.5}** | **{}** |",
-        t85 as f64 / total as f64,
-        t91 as f64 / total as f64,
-        pct(t91, t85)
-    );
-
-    // Throughput per file and summed, not on the concatenation. `encode_smart`
-    // takes one entropy sample per input, so handing it six megabytes of JPEG
-    // and JSON glued together asks it a question no caller asks. Aggregate is
-    // total bytes over total time, which is what a caller encoding the corpus
-    // file by file would see.
-    let sum_rate = |mut f: Run| -> f64 {
-        let mut best = f64::MAX;
-        for _ in 0..3 {
-            let t = Instant::now();
-            for (_, d) in &files {
-                std::hint::black_box(f(d));
-            }
-            best = best.min(t.elapsed().as_secs_f64());
-        }
-        total as f64 / 1e6 / best
+    let size = |out: &[String]| out.iter().map(String::len).sum::<usize>();
+    let jdp = |level: i32| -> Vec<String> {
+        files.iter().map(|d| base91_jdp::encode_smart(d, level).unwrap()).collect()
     };
-    let enc85: Vec<String> = files.iter().map(|(_, d)| base85n::encode(d)).collect();
-    let enc91: Vec<String> = files.iter().map(|(_, d)| base91_jdp::encode(d)).collect();
-    let dec_rate = |mut f: Read, src: &[String]| -> f64 {
-        let mut best = f64::MAX;
-        for _ in 0..3 {
-            let t = Instant::now();
-            for s in src {
-                std::hint::black_box(f(s));
-            }
-            best = best.min(t.elapsed().as_secs_f64());
-        }
-        total as f64 / 1e6 / best
-    };
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
 
-    println!("\n### Throughput, neither side compressing\n");
-    println!("This is a build of base91-jdp *without* zstd, which is the only");
-    println!("configuration comparable to Base85N: Base85N has no compressor, so");
-    println!("giving this one its default feature set would compare two different");
-    println!("things. It is not the default build, and the section below is.\n");
-    println!("| | encode | encode, {threads} threads | decode |");
+    println!("## {} files, {total} bytes\n", files.len());
+
+    let b85: Vec<String> = files.iter().map(|d| base85n::encode(d)).collect();
+    let n85 = size(&b85);
+    let e85 = rate(total, || for d in &files { std::hint::black_box(base85n::encode(d).len()); });
+    let d85 = rate(total, || for s in &b85 { std::hint::black_box(base85n::decode(s).unwrap().len()); });
+
+    println!("### Each codec as it ships\n");
+    println!("| | size | encode | decode |");
     println!("|---|---|---|---|");
-    println!(
-        "| **Base85N** | **{:.0} MB/s** | **{:.0} MB/s** | **{:.0} MB/s** |",
-        sum_rate(Box::new(|d| base85n::encode(d).len())),
-        sum_rate(Box::new(move |d| base85n::encode_parallel(d, threads).len())),
-        dec_rate(Box::new(|s| base85n::decode(s).unwrap().len()), &enc85)
-    );
-    println!(
-        "| base91-jdp, no compressor | {:.0} MB/s | {:.0} MB/s | {:.0} MB/s |",
-        sum_rate(Box::new(|d| base91_jdp::encode(d).len())),
-        sum_rate(Box::new(move |d| base91_jdp::encode_parallel(d, threads).len())),
-        dec_rate(Box::new(|s| base91_jdp::decode(s).unwrap().len()), &enc91)
-    );
-
-    println!("\n### The default build, where the entropy gate decides\n");
-    println!("zstd is a default feature of this crate, so this is what a caller");
-    println!("gets without asking for anything. Section 11.5 samples the input and");
-    println!("either compresses it or skips the scan; Base85N's column is the same");
-    println!("number three times because it has one path.\n");
-    println!("| | Base85N | base91-jdp | size | encode | decode |");
-    println!("|---|---|---|---|---|---|");
-    for level in [-5i32, 3, 9] {
-        let out: Vec<String> = files
-            .iter()
-            .map(|(_, d)| base91_jdp::encode_smart(d, level).unwrap())
-            .collect();
-        for (o, (name, d)) in out.iter().zip(&files) {
-            assert_eq!(base91_jdp::decode(o).unwrap(), *d, "smart {name}");
-        }
-        let c: usize = out.iter().map(String::len).sum();
+    println!("| Base85N 0.5.1 | {:.5} | {e85:.0} MB/s | {d85:.0} MB/s |", n85 as f64 / total as f64);
+    for (level, note) in [(1i32, "the recommendation"), (-5, "for encode throughput")] {
+        let out = jdp(level);
+        let n = size(&out);
         println!(
-            "| zstd {level} | {:.5} | **{:.5}** | {} | {:.0} MB/s | {:.0} MB/s |",
-            t85 as f64 / total as f64,
-            c as f64 / total as f64,
-            pct(c, t85),
-            sum_rate(Box::new(move |d| base91_jdp::encode_smart(d, level).unwrap().len())),
-            dec_rate(Box::new(|s| base91_jdp::decode(s).unwrap().len()), &out)
+            "| **base91-jdp, zstd {level}** ({note}) | **{:.5}** | {:.0} MB/s | {:.0} MB/s |",
+            n as f64 / total as f64,
+            rate(total, || for d in &files {
+                std::hint::black_box(base91_jdp::encode_smart(d, level).unwrap().len());
+            }),
+            rate(total, || for s in &out {
+                std::hint::black_box(base91_jdp::decode(s).unwrap().len());
+            })
+        );
+    }
+
+    println!("\n### Every level, and what a Base85N caller would have to build\n");
+    println!("| level | base91-jdp | encode | decode | zstd → Base85N | |");
+    println!("|---|---|---|---|---|---|");
+    for level in [-5i32, -3, -1, 1, 2, 3, 5, 9] {
+        let out = jdp(level);
+        let n = size(&out);
+        let p: usize = files.iter().map(|d| pipeline(d, level).len()).sum();
+        println!(
+            "| {level} | **{:.5}** | {:.0} MB/s | {:.0} MB/s | {:.5} | {} |",
+            n as f64 / total as f64,
+            rate(total, || for d in &files {
+                std::hint::black_box(base91_jdp::encode_smart(d, level).unwrap().len());
+            }),
+            rate(total, || for s in &out {
+                std::hint::black_box(base91_jdp::decode(s).unwrap().len());
+            }),
+            p as f64 / total as f64,
+            pct(n, p)
         );
     }
     println!(
-        "| Base85N, for reference | {:.5} | | | {:.0} MB/s | {:.0} MB/s |",
-        t85 as f64 / total as f64,
-        sum_rate(Box::new(|d| base85n::encode(d).len())),
-        dec_rate(Box::new(|s| base85n::decode(s).unwrap().len()), &enc85)
+        "\nNegative levels are the one place the pipeline wins, and Section 10.1\n\
+         says why: they limit the entropy coding of literals, so stretches of\n\
+         the source survive into the frame where Base85N's passthrough reaches\n\
+         them and this format's block mode does not look. From level 1 up there\n\
+         is nothing left to find and this format is ahead everywhere."
+    );
+
+    let plain: usize = files.iter().map(|d| base91_jdp::encode(d).len()).sum();
+    println!(
+        "\n### The containers alone, for the record\n\n\
+         Neither side compressing -- a build of this crate that cannot link\n\
+         zstd. It is not a configuration a caller chooses, and it is not a term\n\
+         in the comparison above; it says what the container is worth.\n\n\
+         | | size | encode | decode |\n|---|---|---|---|\n\
+         | Base85N | {:.5} | {e85:.0} MB/s | {d85:.0} MB/s |\n\
+         | base91-jdp, no compressor | **{:.5}** ({}) | {:.0} MB/s | {:.0} MB/s |",
+        n85 as f64 / total as f64,
+        plain as f64 / total as f64,
+        pct(plain, n85),
+        rate(total, || for d in &files { std::hint::black_box(base91_jdp::encode(d).len()); }),
+        {
+            let out: Vec<String> = files.iter().map(|d| base91_jdp::encode(d)).collect();
+            rate(total, || for s in &out { std::hint::black_box(base91_jdp::decode(s).unwrap().len()); })
+        }
     );
 }

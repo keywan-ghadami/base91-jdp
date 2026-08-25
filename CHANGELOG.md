@@ -19,25 +19,35 @@ fits in one, which is everything up to 128 KiB. It is worth nothing on a
 megabyte and 11 % of the encoding on a protocol field, and it halves the length
 at which compression starts to pay. Specification Sections 10.1, 10.2 and 17.20.
 
-Measured head to head against Base85N 0.5.1, both implementations built from
-source and run in one process under one timing loop, so the comparison is of
-two encodings rather than two languages. Smaller in every configuration: 2.3 %
-on the core corpus and 1.3 % on Silesia with neither side compressing, 14.2 %
-on field-length payloads, 41 % to 69 % with a compressor. At zstd −5, 48 %
-smaller and 14 % faster at the same time. Slower in two places, both stated
-rather than buried: six times slower to encode without a compressor, which is
-the candidate scan, and two to three times slower to decode in every
-configuration, which is what 91 characters cost a byte-oriented decoder against
-85. And two things Base85N does that this format does not — its alphabet is
-safe in XML, HTML and CSV where this one is dense inside a JSON string and
-nothing more, and a compressed payload is not readable where passthrough leaves
-text legible. Specification Section 17.21.
+Measured head to head against Base85N 0.5.1, each codec as it ships — this one
+with its compressor, which is part of the format, and Base85N without one,
+because it has none. Both built from source and run in one process under one
+timing loop, so the comparison is of two encodings rather than two languages.
+On the core corpus: Base85N 1.00698 at 486 MB/s, this format 0.37431 at 403
+MB/s at level 1 and 0.52271 at 502 MB/s at level −5 — half the size and faster
+at the same time, at the setting a caller picks for throughput. Level 1 is the
+recommendation, 2.7 times smaller at 83 % of the throughput. It decodes two to
+three times slower, which is what 91 characters cost a byte-oriented decoder
+against 85. Specification Section 17.21.
 
-Finding that took three per-byte costs out of the decoder, none of them the
+Section 10.1's reasoning was wrong about one thing and is corrected. It said a
+compressor's output holds nothing the candidate scan could find; that is true
+of zstd from level 1 upward and false below it, because the negative levels
+limit the entropy coding of literals and leave stretches of the source in the
+frame. Scanning anyway would be worth 2.71 % at level −5 and 0.04 % at level 3.
+The rule is unchanged — carrying a compressed payload as an arbitrary encoded
+stream would make Section 12's decoder recursive for a gain confined to levels
+a caller should not use when size matters — but Section 17.22 now measures it
+and says so. It is also the one place a zstd-then-Base85N pipeline is smaller
+than this format; from level 1 up this format is ahead of that pipeline by
+1.2 % to 1.5 %.
+
+Finding it took four per-byte costs out of the decoder, none of them the
 format: a whole-stream copy to strip whitespace no stream contains, a walk over
-the R-Set per byte of passthrough where a table answers in one lookup, and a
-missing bulk path for block mode where the encoder has had one from the start.
-Decode went from 213 MB/s to 381 on the core corpus.
+the R-Set per byte of passthrough, a second pass to build the donor table, and
+a missing bulk path for block mode where the encoder has had one from the
+start. A JPEG went from 405 MB/s to 1 017, CSS from 240 to 1 043, and the core
+corpus without a compressor from 213 to 543.
 
 The reference implementation moved with it. v0.4.0 is implemented in
 `rust/`; the JavaScript package that implemented v0.3.0 is complete, tested and

@@ -540,10 +540,19 @@ the block coder of Section 5.1.
 
 **A compressed payload is block mode and nothing else.** The bytes of a frame
 are packed at `w = 8` and an encoder MUST NOT run the candidate scan of
-Section 11.1 over them: it produced them, it knows they are compressed, and a
-compressor's output holds no run, no restricted alphabet and no representable
-text worth looking for. Section 17.12 measures what looking anyway costs, and
-it is a factor of fifteen.
+Section 11.1 over them: it produced them, it knows they are compressed, and
+looking costs a factor of fifteen for what Section 17.12 measures it finds.
+
+That last clause holds **from compression level 1 upward, and not below it**.
+zstd's negative levels limit the entropy coding of literals, so stretches of
+the source's own bytes survive into the frame, and the scan would find them:
+running it anyway is worth 2.71 % at level −5 and 1.35 % at −1, against 0.04 %
+at level 3 and 0.01 % at level 1. The rule is unchanged — an encoder that
+scanned would have to carry the payload as something other than block-packed
+bytes, and Section 17.22 prices that against the simplicity it would cost —
+but the reason it is free is a property of the compressor's ordinary levels
+and not of compressed data as such. A caller who wants the smallest output
+uses level 1 or above, where there is nothing left to find.
 
 The frame is self-delimiting and this format adds nothing to it: no padding
 byte, no dictionary rule and no segment structure of its own. The length field
@@ -1904,76 +1913,81 @@ constraining the compressor for.
 ### 17.21 Against Base85N, head to head
 
 Everything above measures this format against itself. This section measures it
-against the codec it is derived from, on three corpora, with both
-implementations built from source and run in the same process under the same
-timing loop — `rust/examples/headtohead.rs`. Both are Rust, compiled by the
-same compiler at the same optimisation level, on the same bytes, so what is
-compared is two encodings rather than two languages.
+against the codec it is derived from, with both implementations built from
+source and run in the same process under the same timing loop —
+`rust/examples/headtohead.rs`. Both are Rust, compiled by the same compiler at
+the same optimisation level, on the same bytes, so what is compared is two
+encodings rather than two languages.
 
-Base85N has no compressor. Two configurations are therefore reported and must
-not be read as one.
+**Each codec is compared as it ships.** Compression is part of this format
+(Section 10) and is not part of Base85N's. There is no configuration here that
+switches this format's compressor off, because a caller does not have one.
 
-#### Size, neither side compressing
+#### Core corpus, 6.52 MB
 
-| corpus | Base85N | base91-jdp | |
+| | size | encode | decode |
 |---|---|---|---|
-| core, 6.52 MB | 1.00698 | **0.98354** | −2.33 % |
-| Silesia, 202 MiB | 1.05114 | **1.03792** | −1.26 % |
-| 55 field samples under 200 B | 1.07812 | **0.92524** | −14.18 % |
+| Base85N 0.5.1 | 1.00698 | 486 MB/s | 1 331 MB/s |
+| **base91-jdp, zstd 1** | **0.37431** | 403 MB/s | 584 MB/s |
+| **base91-jdp, zstd −5** | **0.52271** | **502 MB/s** | 398 MB/s |
 
-Smaller on 12 of the 13 core files — `requests-history.md` is the exception, by
-0.05 % — and on all 12 Silesia files. The margin is widest where the payload is
-short, because the packed bases of Section 9 reach alphabets Base85N carries
-through passthrough.
+**Level 1 is the recommendation: 2.7 times smaller at 83 % of the encode
+throughput.** Level −5 is for a caller who wants encode throughput above
+everything: **half the size and faster at the same time**, 502 MB/s against
+486. Section 17.17 explains why that is not a paradox — compressing first hands
+the container a payload with nothing in it to scan, and the container then runs
+at three gigabytes a second.
 
-#### Size with a compressor, which is the question a caller actually has
+On Silesia the shape is the same: Base85N 1.05114, this format 0.41053 at level
+3 and 0.61569 at −5. On the 55 field samples under 200 bytes, where no
+compressor has a window, Base85N is 1.07812 and this format 0.92524 — 14.2 %
+smaller with the classes of Sections 8 to 10 doing all of the work.
 
-| corpus | Base85N | base91-jdp, zstd −5 | zstd 3 | zstd 9 |
-|---|---|---|---|---|
-| core | 1.00698 | 0.52271 (−48 %) | 0.34443 (−66 %) | **0.31449 (−69 %)** |
-| Silesia | 1.05114 | 0.61569 (−41 %) | 0.41053 (−61 %) | **0.38105 (−64 %)** |
-| short | 1.07812 | 0.92524 (−14 %) | **0.91936 (−15 %)** | 0.91936 (−15 %) |
+#### What a Base85N caller would have to build
 
-#### Throughput
+Base85N has no compressor, so a caller who needs a stream this small puts one
+in front of it. That pipeline is given every advantage here: a stock zstd frame
+over the whole file in one piece, where this format chunks at a mebibyte and
+pays 0.2 % for it (Section 17.9).
 
-Two rows, not one. The first is a build of base91-jdp **without** zstd, which
-is the only configuration comparable to a codec that has no compressor. The
-second is the default build, where Section 11.5's entropy sample decides.
+| level | base91-jdp | encode | decode | zstd → Base85N | |
+|---|---|---|---|---|---|
+| −5 | 0.52271 | 502 MB/s | 403 MB/s | 0.50479 | +3.55 % |
+| −3 | 0.48072 | 474 MB/s | 422 MB/s | 0.46976 | +2.33 % |
+| −1 | 0.43651 | 437 MB/s | 437 MB/s | 0.42977 | +1.57 % |
+| **1** | **0.37431** | 397 MB/s | 571 MB/s | 0.37992 | **−1.48 %** |
+| 3 | **0.34443** | 272 MB/s | 475 MB/s | 0.34897 | **−1.30 %** |
+| 9 | **0.31449** | 63 MB/s | 648 MB/s | 0.31830 | **−1.20 %** |
 
-| core corpus | encode | encode, 4 threads | decode |
-|---|---|---|---|
-| **Base85N** | **401 MB/s** | **412 MB/s** | **1 047 MB/s** |
-| base91-jdp, no compressor | 68 MB/s | 152 MB/s | 381 MB/s |
-| base91-jdp, zstd −5 | **457 MB/s** | | 351 MB/s |
-| base91-jdp, zstd 3 | 244 MB/s | | 457 MB/s |
-| base91-jdp, zstd 9 | 54 MB/s | | 520 MB/s |
+**Ahead from level 1 upward, behind below it**, and Section 10.1 says why: the
+negative levels leave literals uncoded, Base85N's passthrough reaches them and
+this format's block mode is forbidden to look. It is the only place a Base85N
+pipeline is smaller, and level 1 is smaller than level −5 by 28 % anyway.
 
-On Silesia the same shape: Base85N 352 encode and 931 decode, base91-jdp 86 and
-402 without a compressor, 444 and 449 at level −5.
+#### Where this format is slower
 
-**Read the losses first.** Without a compressor this encoder is **six times
-slower** than Base85N's: the candidate scan of Section 11.1 runs over every
-byte no class claims, and Section 17.12 prices it. **It decodes between two and
-three times slower in every configuration**, and no setting of this format
-changes that. Base85N's alphabet of 85 leaves a byte-oriented decoder a
-simpler job than 91 does, and that is a property of the choice of 91, not an
-implementation detail waiting to be fixed.
+**It decodes between two and three times slower.** 584 MB/s at level 1 against
+Base85N's 1 331. Three per-byte costs came out of the decoder while this was
+measured — a whole-stream copy to strip whitespace no stream contains, a walk
+over the R-Set per byte of passthrough, and a missing bulk path for block mode
+— which took a JPEG from 405 MB/s to 1 017 and CSS from 240 to 1 043. What
+remains is the structure: 91 characters are a harder job for a byte-oriented
+decoder than 85, and the files that stay slowest are the ones with the most
+segments in them.
 
-**Then the win.** At level −5 this encoder is **48 % smaller and 14 % faster**
-than Base85N on the core corpus, and 41 % smaller and 14 % faster on Silesia.
-That is not a trade-off, and Section 17.17 explains why it is not a paradox:
-compressing first hands the container a payload with nothing in it to scan.
-The setting a caller reaches for when they want speed is the setting where this
-format wins on both axes at once.
+**Without a compressor it encodes six times slower**, 77 MB/s against 486,
+because the candidate scan of Section 11.1 runs over every byte no class
+claims. This does not appear in the comparison above because the compressed
+path does not run the scan at all (Section 11.5) — it is what a build that
+cannot link zstd would see.
 
 #### What Base85N does that this format cannot
 
 Two things, and neither is a measurement.
 
-**The alphabet is JSON-safe and no more.** Base85N's 85 characters were chosen
-to avoid the delimiters of several text formats at once; this format's 91 are
-basE91's with `"` replaced, chosen to be dense inside a JSON string. What that
-costs:
+**The alphabet is JSON-safe and no more.** Base85N's 85 characters avoid the
+delimiters of several text formats at once; this format's 91 are basE91's with
+`"` replaced, chosen to be dense inside a JSON string. What that costs:
 
 | embedding context | base91-jdp | Base85N |
 |---|---|---|
@@ -1983,17 +1997,41 @@ costs:
 | CSV field | no — contains `,` | **safe** |
 | URL query value | no | no |
 
-Six extra characters are worth about 2 % of size and cost three embedding
-contexts. A caller who needs XML, HTML or CSV should use Base85N; this format
-does not compete for that use and should not be made to.
+Six extra characters are worth about 2 % of the container and cost three
+embedding contexts. A caller who needs XML, HTML or CSV should use Base85N;
+this format does not compete for that use and should not be made to.
 
 **A compressed payload is not readable.** Base85N's passthrough leaves text
 legible in the encoded stream, and so does this format's — but only on the
-uncompressed path, which is the path that is 2 % smaller rather than 48 %.
-Every result in the second table above is a stream in which nothing can be read
-without decoding it. Where an operator greps logs or eyeballs a config, that
-matters more than the ratio, and Section 11.2's comparison is per-call: an
-encoder may simply not compress.
+uncompressed path. Every figure above that beats Base85N by more than 2 % is a
+stream in which nothing can be read without decoding it. Where an operator
+greps logs or eyeballs a config, that matters more than the ratio, and Section
+11.2's comparison is per call: an encoder may simply not compress.
+
+### 17.22 The 2.71 % that Section 10.1 leaves on the table
+
+Running the candidate scan over a compressed payload, which Section 10.1
+forbids:
+
+| level | as specified | scanned | gain | zstd → Base85N |
+|---|---|---|---|---|
+| −5 | 0.52225 | 0.50808 | −2.71 % | 0.50479 |
+| −1 | 0.43626 | 0.43038 | −1.35 % | 0.42977 |
+| 1 | 0.37420 | 0.37415 | −0.01 % | 0.37992 |
+| 3 | 0.34378 | 0.34364 | −0.04 % | 0.34897 |
+
+`rust/examples/scanframe.rs`. The gain is entirely at the negative levels and
+it does not close the gap to the pipeline even there — 0.50808 against 0.50479.
+
+**Not taken.** A compressed segment's payload is block-packed bytes, and
+carrying it as an arbitrary encoded stream instead would make it recursive: the
+length field would count frame bytes while the payload is a stream of segments
+that decode to them, and Section 12's decoder would need a nested decode with
+its own budget. That is a large change to Sections 10.1, 12.4 and 16 for a gain
+confined to the compression levels a caller should not use when size matters —
+level 1 is 28 % smaller than level −5 and already beats the pipeline by 1.48 %.
+The finding stands as a correction to Section 10.1's reasoning, which claimed
+of all compressor output what is true only of level 1 and above.
 
 ---
 

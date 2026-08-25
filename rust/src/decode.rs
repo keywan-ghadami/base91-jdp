@@ -267,10 +267,25 @@ impl<'a> Decoder<'a> {
     /// carry no check of their own -- `left >= 18` at entry, and the loop
     /// re-establishes it before every iteration.
     fn bulk(&mut self, out: &mut Vec<u8>) -> Result<bool> {
-        let mut took = false;
-        while self.left() >= 18 && out.len() + 13 <= self.budget {
-            let w = &self.src[self.at..self.at + 16];
-            let mut g: u128 = 0;
+        // How many whole groups could run before the tail, the ceiling or the
+        // end of the stream stops them. Establishing all three here means the
+        // loop below carries no bounds check, no capacity check and no ceiling
+        // check of its own.
+        let by_input = self.left().saturating_sub(2) / 16;
+        let by_budget = self.budget.saturating_sub(out.len()) / 13;
+        let groups = by_input.min(by_budget);
+        if groups == 0 {
+            return Ok(false);
+        }
+        // Thirteen bytes are written as one sixteen-byte store, so the buffer
+        // needs three bytes of slack past the last group. They are never made
+        // visible: `set_len` counts thirteen per group.
+        out.reserve(13 * groups + 16);
+        let start = out.len();
+        let mut dst = unsafe { out.as_mut_ptr().add(start) };
+        let mut done = 0usize;
+        while done < groups {
+            let w = &self.src[self.at + 16 * done..self.at + 16 * done + 16];
             // No branch inside the group. `VALUE_OF` is 0..=90 for a character
             // in the alphabet and 0xFF for one that is not, so bit 7 of the OR
             // of all sixteen lookups is set exactly when one of them failed;
@@ -278,6 +293,7 @@ impl<'a> Decoder<'a> {
             // when one of them is a signal. Two conditions, one branch, once
             // per thirteen bytes -- where the first version of this asked
             // sixteen times and decoded a JPEG at 405 MB/s.
+            let mut g: u128 = 0;
             let mut bad = 0u8;
             let mut sig = 0u16;
             for k in 0..8 {
@@ -291,15 +307,20 @@ impl<'a> Decoder<'a> {
             if bad & 0x80 != 0 || sig >= SIGNAL_MIN {
                 // A character outside the alphabet, or a signal: both are the
                 // scalar path's business, which reports where and why.
-                return Ok(took);
+                break;
             }
-            out.extend_from_slice(&g.to_be_bytes()[..13]);
-            self.at += 16;
-            took = true;
-            // No trace entry: block mode is what `explain` reports by
-            // subtraction, exactly as the scalar path leaves it.
+            // Sixteen bytes go out and the pointer advances thirteen, so the
+            // next group overwrites the three that were not ours. `to_be`
+            // puts the bytes in the order a big-endian read would see.
+            unsafe {
+                dst.cast::<u128>().write_unaligned(g.to_be());
+                dst = dst.add(13);
+            }
+            done += 1;
         }
-        Ok(took)
+        unsafe { out.set_len(start + 13 * done) };
+        self.at += 16 * done;
+        Ok(done > 0)
     }
 
     fn final_group(&mut self, out: &mut Vec<u8>) -> Result<()> {
@@ -489,7 +510,6 @@ impl<'a> Decoder<'a> {
                     (SHORTHAND_MASK[(class - CLASS_PT0) as usize], 0)
                 };
                 let l = self.bounded_length(MAX_SEGMENT_BYTES)?;
-                let donors = crate::encode::donor_table(mask, profile);
                 if self.left() < l {
                     return Err(self.err(Code::UnexpectedEos, "passthrough payload"));
                 }
@@ -498,15 +518,23 @@ impl<'a> Decoder<'a> {
                 }
                 // Lend the table the segment's donors, and take them back
                 // after: only the set bits move, so this is at most eight
-                // writes however long the payload is.
+                // writes however long the payload is. The donor for a set bit
+                // is the next character of the profile, which is what
+                // `encode::donor_table` builds -- taken inline here because a
+                // three-byte segment cannot afford a second pass over the
+                // R-Set, and `mask == 0` is the commonest case of all.
                 let mut saved = [(0u8, 0u16); R_LEN];
                 let mut n_saved = 0;
-                for j in 0..R_LEN {
-                    if mask & (1 << j) != 0 {
-                        let d = donors[j];
-                        saved[n_saved] = (d, self.xlat[d as usize]);
-                        n_saved += 1;
-                        self.xlat[d as usize] = R_CHARS[j] as u16;
+                if mask != 0 {
+                    let mut rank = 0usize;
+                    for (j, &r) in R_CHARS.iter().enumerate() {
+                        if mask & (1 << j) != 0 {
+                            let d = PROFILES[profile][rank];
+                            rank += 1;
+                            saved[n_saved] = (d, self.xlat[d as usize]);
+                            n_saved += 1;
+                            self.xlat[d as usize] = r as u16;
+                        }
                     }
                 }
                 let mut bad = None;
