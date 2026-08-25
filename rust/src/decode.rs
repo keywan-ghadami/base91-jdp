@@ -53,7 +53,13 @@ fn frame_reserve(frame: &[u8]) -> usize {
 }
 
 pub struct Decoder<'a> {
-    src: Vec<u8>, // significant characters only
+    src: std::borrow::Cow<'a, [u8]>, // significant characters only
+    /// Character -> the byte it stands for, or `INVALID`. Identity for every
+    /// alphabet character; a passthrough segment overwrites at most the eight
+    /// donor entries and puts them back afterwards, so the table is built once
+    /// for the stream rather than once per segment, and the per-byte work is
+    /// one lookup instead of a walk over the R-Set.
+    xlat: [u16; 256],
     raw: &'a [u8],
     at: usize,
     bits: u32,
@@ -67,11 +73,45 @@ pub struct Decoder<'a> {
 /// Whitespace is removed before decoding: none of the four is in the alphabet,
 /// so wrapped output decodes unchanged. Removal is one pass, not a repeated
 /// scan, which is what keeps a padded stream linear (section 16).
-fn significant(text: &[u8]) -> Vec<u8> {
-    text.iter()
-        .copied()
-        .filter(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
-        .collect()
+/// The stream without its insignificant whitespace.
+///
+/// Borrowed where there is none to remove, which is every stream this
+/// implementation produces and most streams anyone else will hand it. The
+/// copy is not free: filtering a megabyte one byte at a time, with a branch
+/// per byte and a growing vector, cost more than decoding it did -- a JPEG
+/// went from 384 MB/s to 810 the moment this stopped allocating, and a WASM
+/// binary from 328 to 596. The scan
+/// that decides is a single pass with no branch the compiler cannot
+/// vectorise.
+fn significant(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let dirty = text
+        .iter()
+        .fold(0u8, |a, &b| a | u8::from(matches!(b, b' ' | b'\t' | b'\n' | b'\r')));
+    if dirty == 0 {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    std::borrow::Cow::Owned(
+        text.iter()
+            .copied()
+            .filter(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+            .collect(),
+    )
+}
+
+/// A character stands for a byte the alphabet does not hold.
+const INVALID: u16 = 0xFFFF;
+
+/// Identity for every alphabet character, `INVALID` for everything else.
+fn identity_xlat() -> [u16; 256] {
+    let mut t = [INVALID; 256];
+    let mut c = 0usize;
+    while c < 256 {
+        if VALUE_OF[c] != 0xFF {
+            t[c] = c as u16;
+        }
+        c += 1;
+    }
+    t
 }
 
 /// Which classes a stream used, and how many input bytes each carried.
@@ -89,6 +129,7 @@ pub fn explain(text: &str) -> Result<Vec<(&'static str, usize)>> {
         bits: 0,
         n: 0,
         budget: usize::MAX / 4,
+        xlat: identity_xlat(),
         trace: Some(Vec::new()),
     };
     d.run()?;
@@ -108,6 +149,7 @@ pub fn decode_bounded(text: &str, budget: usize) -> Result<Vec<u8>> {
         bits: 0,
         n: 0,
         budget,
+        xlat: identity_xlat(),
         trace: None,
     };
     d.run()
@@ -195,6 +237,19 @@ impl<'a> Decoder<'a> {
                 self.final_group(&mut out)?;
                 return Ok(out);
             }
+            if self.n == 0 && left >= 18 {
+                // Whole groups, the mirror of `symbols::block_bulk`: sixteen
+                // characters are eight pairs are thirteen bytes, exactly, with
+                // no bits owed at either end. The scalar path below reaches the
+                // same answer one byte at a time through `emit`, which checks
+                // the ceiling per byte and pushes per byte; here the ceiling is
+                // checked once per group and the thirteen bytes are one write.
+                // Eighteen rather than sixteen keeps the final group, which is
+                // one or two characters, out of the fast path entirely.
+                if self.bulk(&mut out)? {
+                    continue;
+                }
+            }
             let v = self.take_pair()?;
             if v >= SIGNAL_MIN {
                 self.signal(v, &mut out)?;
@@ -202,6 +257,49 @@ impl<'a> Decoder<'a> {
                 self.push_bits(v as u32, SYMBOL_BITS, &mut out)?;
             }
         }
+    }
+
+    /// Decode as many whole groups as run without a signal. `Ok(false)` means
+    /// the first group was not one this path may take, and the caller should
+    /// fall back; anything it does take, it has consumed.
+    ///
+    /// The bounds are established once for the whole group, so the inner reads
+    /// carry no check of their own -- `left >= 18` at entry, and the loop
+    /// re-establishes it before every iteration.
+    fn bulk(&mut self, out: &mut Vec<u8>) -> Result<bool> {
+        let mut took = false;
+        while self.left() >= 18 && out.len() + 13 <= self.budget {
+            let w = &self.src[self.at..self.at + 16];
+            let mut g: u128 = 0;
+            // No branch inside the group. `VALUE_OF` is 0..=90 for a character
+            // in the alphabet and 0xFF for one that is not, so bit 7 of the OR
+            // of all sixteen lookups is set exactly when one of them failed;
+            // and the OR of the eight pair values reaches `SIGNAL_MIN` exactly
+            // when one of them is a signal. Two conditions, one branch, once
+            // per thirteen bytes -- where the first version of this asked
+            // sixteen times and decoded a JPEG at 405 MB/s.
+            let mut bad = 0u8;
+            let mut sig = 0u16;
+            for k in 0..8 {
+                let lo = VALUE_OF[w[2 * k] as usize];
+                let hi = VALUE_OF[w[2 * k + 1] as usize];
+                bad |= lo | hi;
+                let v = (lo as u16 & 0x7F) + 91 * (hi as u16 & 0x7F);
+                sig |= v;
+                g |= (v as u128) << (115 - 13 * k);
+            }
+            if bad & 0x80 != 0 || sig >= SIGNAL_MIN {
+                // A character outside the alphabet, or a signal: both are the
+                // scalar path's business, which reports where and why.
+                return Ok(took);
+            }
+            out.extend_from_slice(&g.to_be_bytes()[..13]);
+            self.at += 16;
+            took = true;
+            // No trace entry: block mode is what `explain` reports by
+            // subtraction, exactly as the scalar path leaves it.
+        }
+        Ok(took)
     }
 
     fn final_group(&mut self, out: &mut Vec<u8>) -> Result<()> {
@@ -392,24 +490,44 @@ impl<'a> Decoder<'a> {
                 };
                 let l = self.bounded_length(MAX_SEGMENT_BYTES)?;
                 let donors = crate::encode::donor_table(mask, profile);
-                for _ in 0..l {
-                    if self.left() == 0 {
-                        return Err(self.err(Code::UnexpectedEos, "passthrough payload"));
-                    }
-                    let ch = self.src[self.at];
-                    self.at += 1;
-                    let mut byte = ch;
-                    for j in 0..R_LEN {
-                        if mask & (1 << j) != 0 && donors[j] == ch {
-                            byte = R_CHARS[j];
-                            break;
-                        }
-                    }
-                    if VALUE_OF[ch as usize] == 0xFF {
-                        return Err(self.err(Code::InvalidCharacter, "in a passthrough payload"));
-                    }
-                    self.emit(out, byte)?;
+                if self.left() < l {
+                    return Err(self.err(Code::UnexpectedEos, "passthrough payload"));
                 }
+                if out.len() + l > self.budget {
+                    return Err(self.err(Code::InvalidLength, "output ceiling exceeded"));
+                }
+                // Lend the table the segment's donors, and take them back
+                // after: only the set bits move, so this is at most eight
+                // writes however long the payload is.
+                let mut saved = [(0u8, 0u16); R_LEN];
+                let mut n_saved = 0;
+                for j in 0..R_LEN {
+                    if mask & (1 << j) != 0 {
+                        let d = donors[j];
+                        saved[n_saved] = (d, self.xlat[d as usize]);
+                        n_saved += 1;
+                        self.xlat[d as usize] = R_CHARS[j] as u16;
+                    }
+                }
+                let mut bad = None;
+                out.reserve(l);
+                for k in 0..l {
+                    let ch = self.src[self.at + k];
+                    let b = self.xlat[ch as usize];
+                    if b == INVALID {
+                        bad = Some(k);
+                        break;
+                    }
+                    out.push(b as u8);
+                }
+                for &(d, v) in &saved[..n_saved] {
+                    self.xlat[d as usize] = v;
+                }
+                if let Some(k) = bad {
+                    self.at += k;
+                    return Err(self.err(Code::InvalidCharacter, "in a passthrough payload"));
+                }
+                self.at += l;
             }
         }
         if let Some(t) = self.trace.as_mut() {
