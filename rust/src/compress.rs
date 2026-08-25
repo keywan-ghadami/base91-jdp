@@ -21,7 +21,7 @@
 //! and that means building both. [`encode_auto`] does; [`encode_zstd`] does
 //! not, and exists so that the compression path can be measured on its own.
 
-use crate::encode::{encode, Encoder};
+use crate::encode::encode;
 use crate::symbols::{block_bulk, length_chars, put_length};
 use crate::tables::{CLASS_ZSTD, SIGNAL_MIN};
 
@@ -41,6 +41,15 @@ pub const COMPARE_BELOW: usize = 4096;
 pub const DEFAULT_EXPANSION_LIMIT: usize = 1 << 30;
 
 thread_local! {
+    /// One frame buffer per thread, kept between calls.
+    ///
+    /// `zstd::bulk::Compressor::compress` allocates `compress_bound(len)` on
+    /// every call and hands the `Vec` back; at a mebibyte of payload that is a
+    /// megabyte-and-change allocation per segment, and at forty bytes it is a
+    /// malloc per field. `compress_to_buffer` writes into a buffer the caller
+    /// owns, so one buffer serves every segment of every call on this thread.
+    static FRAME: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+
     /// One compressor per thread, kept between calls.
     ///
     /// `zstd::bulk::Compressor` holds the context zstd would otherwise
@@ -67,27 +76,38 @@ fn with_compressor<T>(
 }
 
 /// Encode as compressed segments, without weighing them against anything.
+///
+/// The frame is compressed into a buffer this thread keeps and then packed
+/// out of it. There is no way to remove that buffer entirely: the length field
+/// of Section 7.3 precedes the payload and its width depends on the length, so
+/// nothing can be written until the frame is finished. What can be removed is
+/// the *allocation*, and this does.
 pub fn encode_zstd(data: &[u8], level: i32) -> std::io::Result<String> {
-    let mut enc = Encoder::new();
-    enc.out.reserve(2 * (8 * data.len() + 12) / 13 + 64);
+    let mut out: Vec<u8> = Vec::with_capacity(2 * (8 * data.len() + 12) / 13 + 64);
     for chunk in data.chunks(FRAME_PAYLOAD) {
-        let frame = with_compressor(level, |c| c.compress(chunk))?;
-        // The signal, with an empty flush field: block mode is at a group
-        // boundary before the first segment and after every one.
-        let mut out = std::mem::take(&mut enc.out);
-        crate::symbols::put_pair(SIGNAL_MIN + 2 * CLASS_ZSTD, &mut out);
-        put_length(frame.len(), &mut out);
-        // A payload pads its last symbol with zero bits rather than emitting
-        // a short final group: specification section 9, and the decoder
-        // computes the character count from the length field before reading
-        // any of them. Closing with the final-group rule instead makes a
-        // stream whose frame is one character short.
-        let mut acc = crate::symbols::Acc::new();
-        block_bulk(&mut acc, &mut out, &frame);
-        acc.finish_padded(&mut out);
-        enc.out = out;
+        FRAME.with(|cell| -> std::io::Result<()> {
+            let mut frame = cell.borrow_mut();
+            frame.clear();
+            frame.reserve(zstd::zstd_safe::compress_bound(chunk.len()));
+            let n = with_compressor(level, |c| c.compress_to_buffer(chunk, &mut *frame))?;
+            debug_assert_eq!(n, frame.len());
+
+            // The signal, with an empty flush field: block mode is at a group
+            // boundary before the first segment and after every one.
+            crate::symbols::put_pair(SIGNAL_MIN + 2 * CLASS_ZSTD, &mut out);
+            put_length(frame.len(), &mut out);
+            // A payload pads its last symbol with zero bits rather than
+            // emitting a short final group: specification section 9, and the
+            // decoder computes the character count from the length field
+            // before reading any of them. Closing with the final-group rule
+            // instead makes a stream whose frame is one character short.
+            let mut acc = crate::symbols::Acc::new();
+            block_bulk(&mut acc, &mut out, &frame);
+            acc.finish_padded(&mut out);
+            Ok(())
+        })?;
     }
-    Ok(unsafe { String::from_utf8_unchecked(std::mem::take(&mut enc.out)) })
+    Ok(unsafe { String::from_utf8_unchecked(out) })
 }
 
 /// Build both candidates and return the shorter, which is what section 11.2
@@ -135,7 +155,12 @@ pub fn encode_smart(data: &[u8], level: i32) -> std::io::Result<String> {
 pub fn zstd_chars(data: &[u8], level: i32) -> std::io::Result<usize> {
     let mut chars = 0usize;
     for chunk in data.chunks(FRAME_PAYLOAD) {
-        let n = with_compressor(level, |c| c.compress(chunk))?.len();
+        let n = FRAME.with(|cell| -> std::io::Result<usize> {
+            let mut frame = cell.borrow_mut();
+            frame.clear();
+            frame.reserve(zstd::zstd_safe::compress_bound(chunk.len()));
+            with_compressor(level, |c| c.compress_to_buffer(chunk, &mut *frame))
+        })?;
         chars += 2 + length_chars(n) + 2 * ((8 * n + 12) / 13);
     }
     Ok(chars)
