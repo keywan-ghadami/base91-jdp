@@ -8,12 +8,13 @@
 | License | MPL-2.0 |
 | Supersedes | 0.3.0 |
 
-> **Draft.** The wire format is complete. Sections 9 and 10 are new and have
-> not been measured against a running implementation; Section 17 says exactly
-> which numbers are measured, which are arithmetic, and which are inherited
-> from 0.3.0 and no longer hold. Thirteen of the forty-four segment classes
-> are unassigned, and a further forty-five are reachable through the escape, so
-> the format has room without spending any of it today.
+> **Draft.** The wire format is complete and there is a prototype encoder and
+> decoder for all of it but the zstd class, in `rust/`. Section 17 is measured
+> against that prototype except where it says otherwise, and Section 17.3 and
+> the run break of Section 11.1 are both things the prototype found and the
+> arithmetic had missed. Thirteen of the forty-four segment classes are
+> unassigned, and a further forty-five are reachable through the escape, so the
+> format has room without spending any of it today.
 
 ---
 
@@ -221,10 +222,9 @@ does, would reach 8 280 and leave nothing free.
 
 ### 6.1 State
 
-An encoder holds a bit accumulator `b` with `n` valid bits, `0 ≤ n ≤ 12`, and a
-count `binaryRun` of the bytes it has put through block mode since the last
-segment ended. Before the first byte, `b = n = 0` and `binaryRun` is taken to be
-infinite: opening a segment at position 0 costs no flush.
+An encoder holds a bit accumulator `b` with `n` valid bits, `0 ≤ n ≤ 12`.
+Before the first byte, `b = n = 0`, so opening a segment at position 0 costs no
+flush.
 
 ### 6.2 The coder
 
@@ -261,14 +261,12 @@ states the rule from the decoder's side.
 
 While input remains:
 
-1. **Candidate scan.** If `binaryRun ≥ MIN_BINARY_RUN`, run the scan of
-   Section 11.1 at the current position. Otherwise take no candidate.
+1. **Candidate scan.** Run the scan of Section 11.1 at the current position.
 2. **Commit.** If a candidate costs fewer characters than putting the same
    bytes through block mode — *including* the flush field the segment forces
    and the pending bits block mode would have carried on with — emit the
    segment per Section 7, consume its bytes, set `binaryRun = 0`, and repeat.
-3. **Otherwise** put exactly one byte through the block coder, increment
-   `binaryRun`, and repeat.
+3. **Otherwise** put exactly one byte through the block coder and repeat.
 
 At the end of the input: if the last thing emitted was a segment that ran to the
 end, nothing follows it. Otherwise flush per Section 6.3.
@@ -655,6 +653,16 @@ for each byte c:
 values describing the emitted segment are those in effect **before** the byte
 that ended the scan was examined.
 
+**The run break.** A passthrough or packed prefix SHALL also stop at the first
+position `f` such that the `MIN_RUN_IN_SEGMENT` bytes at `f` are identical; the
+prefix ends at `f`, and the run is then carried by a class of Section 10.2 at
+the next decision point. Without this the prefix scans are greedy and swallow
+the runs those classes exist for: passthrough carries a zero byte at one
+character each, since NUL is an R-Set member, where `ZRUN` carries eighty-nine
+of them in three. This was not in the first draft of this version and cost
+2.3 % of the corpus; Section 17.3 measures the threshold and Section 18.11 says
+why it is not simply "any run at all".
+
 The thresholds below are the shortest segment that wins, and the shortest from
 which a class wins at every longer length. They are not monotone — a packed
 base at `w = 5` wins at five bytes, loses at six and wins again at seven,
@@ -695,7 +703,7 @@ Encoder output is deterministic:
 2. **Lowest class on a tie.** Where two candidates are the same length, the one
    with the lower class number; block mode counts as lower than every class.
 3. **Maximal prefix.** Within a class, the longest prefix the scan accepts,
-   subject to `MAX_SEGMENT_BYTES`.
+   subject to `MAX_SEGMENT_BYTES` and to the run break of Section 11.1.
 4. **Smallest viable profile**, and `mask` set for exactly the R-Set characters
    occurring in the segment.
 5. **Shortest length tier** that carries the value, and shortest flush field
@@ -718,11 +726,17 @@ Section 15 treats as conforming.
 | Constant | Value | Notes |
 |---|---|---|
 | `SYMBOL_BITS` | 13 | Fixed; no fourteen-bit branch |
-| `MIN_BINARY_RUN` | 4 | Block-mode bytes before a segment may open again (Section 17.3) |
+| `MIN_RUN_IN_SEGMENT` | 8 | Shortest run that ends a passthrough or packed prefix (Sections 11.1, 17.3) |
 | `MAX_SEGMENT_BYTES` | 65 536 | Bound on every class but `ZSTD`; makes output canonical and encoder memory finite |
 | `MAX_FRAME_BYTES` | 16 777 216 | Bound on one `ZSTD` payload (Section 10.1) |
 | `NUM_PROFILES` | 4 | Donor profiles (Section 17.5) |
 | `R_LEN` | 8 | R-Set size, and the width of `mask` |
+| `PARALLEL_ALIGN` | 13 | Bytes per whole symbol group; a block-mode split here needs no seam (Section 14.5) |
+
+`MIN_BINARY_RUN`, which 0.3.0 set to 4, is **gone**. It answered a question the
+0.3.0 structure raised -- after passthrough had been broken, how many bytes must
+go through block mode before it may resume -- and with typed segments the answer
+is none: Section 17.3 measures every value and zero is the best of them.
 
 ---
 
@@ -891,6 +905,38 @@ precedes the payload. A decoder needs none: every field says how long it is
 before it starts. Neither holds state across a segment boundary — Section 7.2
 flushes the accumulator explicitly and Section 12.4 resets it.
 
+### 14.5 Encoding in parallel
+
+Thirteen bytes are 104 bits are exactly eight symbols, so **block mode returns
+to `n = 0` at every thirteenth byte and nowhere else**. That is the whole basis
+of a parallel encoder: cut the input at multiples of `PARALLEL_ALIGN`, encode
+each piece as though it were a stream of its own, and concatenate the results.
+No piece needs to know what the piece before it held back, because a piece that
+begins on a group boundary begins with an empty accumulator.
+
+A piece must also *end* with one, and segments are what can break that: a
+segment consumes bytes without passing them through the accumulator, so the
+block-mode bytes after the last segment in a piece are what have to be a
+multiple of thirteen, not the piece. Two ways to hold that:
+
+* **Repair the seam.** Each worker encodes speculatively and reports where its
+  last segment ended; a sequential pass then re-encodes the bytes from there to
+  the boundary. The repair is bounded by one segment plus twelve bytes, and the
+  output is **byte-identical to a serial encode**, so Section 11.3 still holds
+  across thread counts.
+* **Stop early.** A worker may decline to open a segment that would leave a tail
+  its boundary cannot absorb. This needs no second pass and produces valid
+  output that is *not* canonical, so an encoder that does it MUST say so.
+
+The first is what a conforming parallel encoder should do, because an encoding
+that changes with the number of threads is one that cannot be diffed, cached by
+content or tested against a fixture.
+
+Decoding does not parallelise the same way: a signal can begin at any pair, so
+nothing but a sequential pass can say where segment boundaries are. A decoder
+with a known-good split — its own earlier encode, or a stream it has already
+walked once — can decode the pieces independently, and that is the only case.
+
 ---
 
 ## 15. Conformance
@@ -998,16 +1044,14 @@ Full method, per-file figures and every sweep: `bench/results/RESULTS.md`. The
 corpus is fetched by `bench/corpus.py`; the projections below are produced by
 `bench/uncompressed.js` and `bench/zstdprojection.js`.
 
-> **What is and is not measured.** Sections 9, 10 and the classes of 10.2 and
-> 10.3 have no running implementation in this repository yet. Their numbers are
-> *projections*: the character counts are computed from the format's own
-> arithmetic over the real corpus, with the stretches between segments costed by
-> the 0.3.0 encoder, which pays an exit signal per passthrough segment and
-> spends a donor on `-` that 0.4.0 does not. Every projection is therefore a
-> floor rather than an estimate. The ratios in Section 9 are arithmetic, not
-> measurements. The throughput table of 0.3.0 has been removed entirely: it was
-> taken on an unoptimised implementation, without a zstd column, and it should
-> not be used to decide anything.
+> **What is and is not measured.** Everything below is the prototype in `rust/`
+> encoding the corpus and decoding it again, except: Section 17.2, which is the
+> 0.3.0 JavaScript codec; the ratios in Section 9, which are arithmetic; and
+> the `ZSTD` class, which the prototype does not implement, so nothing here
+> covers compression at all. The donor profiles are still 0.3.0's and were
+> derived for an R-Set that held `-` rather than NUL (Section 17.5). Neither
+> corpus contains a hex dump, a column of digits or a base64 blob, so nothing
+> here measures the packed classes either (Section 17.11).
 
 ### 17.1 Corpus
 
@@ -1053,18 +1097,42 @@ this format that pays less for them. It is also the cost the run classes of
 Section 10.2 exist to take back, since the files that pay it most are the files
 that are full of zeros.
 
-### 17.3 `MIN_BINARY_RUN`
+### 17.3 The thresholds, re-swept
 
-After a segment has been broken by a byte it cannot carry, how many bytes must
-go through block mode before another may open? Ratio over the core corpus:
+0.3.0's `MIN_BINARY_RUN` was measured against a structure this version does not
+have, and the run break of Section 11.1 is new. Both were swept with the
+prototype encoder over the core corpus, one at a time and then together, by
+`rust/examples/sweep.rs`.
 
-| `MIN_BINARY_RUN` | 1 | 2 | 3 | **4** | 5 | 8 | 16 | 32 |
+| `MIN_BINARY_RUN` | **0** | 1 | 2 | 3 | 4 | 6 | 8 | 16 |
 |---|---|---|---|---|---|---|---|---|
-| ratio | 1.08443 | 1.08442 | 1.08442 | **1.08442** | 1.08450 | 1.08452 | 1.08472 | 1.08503 |
+| ratio | **1.00817** | 1.00892 | 1.00929 | 1.00983 | 1.01113 | 1.01529 | 1.01938 | 1.03114 |
 
-Four is the optimum and the margin over 1 is 0.001 %. Measured with the 0.3.0
-segment structure; the thresholds moved in 0.4.0 (Section 11.1), so this should
-be re-swept.
+Zero is the best value, which is to say the constant should not exist. In 0.3.0
+it stopped passthrough from resuming too eagerly after it had been broken; with
+typed segments there is nothing to stop, and forcing four bytes through block
+mode after every segment costs 0.3 %.
+
+| `MIN_RUN_IN_SEGMENT` | 2 | 4 | 6 | **8** | 10 | 13 | 20 | 40 |
+|---|---|---|---|---|---|---|---|---|
+| ratio | 1.01132 | 1.01126 | 1.01120 | **1.01113** | 1.01113 | 1.01113 | 1.01118 | 1.01167 |
+
+The curve is flat from 6 to 20 and the differences there are in the fifth
+decimal, so 8 is chosen on the plateau rather than at a fitted optimum.
+
+The two do not move independently -- how long a run has to be before breaking
+out pays depends on what happens after the segment that follows -- so the pair
+was also gridded:
+
+| `MIN_BINARY_RUN` | `MIN_RUN_IN_SEGMENT` | ratio |
+|---|---|---|
+| 4 (0.3.0's value) | 13 | 1.01113 |
+| 0 | 13 | 1.00817 |
+| **0** | **8** | **0.97944** |
+
+Three percent of the corpus sits in that grid, which is more than any other
+constant in this document is worth, and it is the reason Section 11.1 states
+the run break normatively rather than leaving it to an encoder.
 
 ### 17.4 Without a compressor on either side
 
@@ -1072,20 +1140,26 @@ Characters per input byte once the output sits in a JSON string. `jdp 0.3.0` is
 the previous version's headerless codec — passthrough and the block coder, and
 nothing else. `jdp 0.4.0` is the projection of Sections 8, 9 and 10.2.
 
-| | Base85N | jdp 0.3.0 | 0.4.0, `ZRUN` and `RUN` | 0.4.0, chained gaps |
+| | Base85N | jdp 0.3.0 | 0.4.0 projected | **0.4.0 measured** |
 |---|---|---|---|---|
-| core, 6.52 MB | **1.00698** | 1.09650 | 1.02281 | 1.00464 |
-| Silesia, 202 MiB | 1.05114 | 1.09861 | 1.05013 | **1.03434** |
-| both, 218 MB | 1.04982 | 1.09855 | 1.04931 | **1.03345** |
+| core, 6.52 MB | 1.00698 | 1.09650 | 1.00464 | **0.97944** |
+| Silesia, 202 MiB | 1.05114 | 1.09861 | 1.03434 | **1.03606** |
+| both, 218 MB | 1.04982 | 1.09855 | 1.03345 | **1.03437** |
+
+The last column is the prototype in `rust/`, encoding the corpus and decoding
+it again. The one before it is what this document projected before that
+prototype existed, and the two agree closely enough to say the arithmetic was
+right -- but only after the prototype found what the arithmetic had missed. Its
+first run over the corpus produced 1.03809 on the core group, not 1.00464,
+because the passthrough scan was swallowing the zero runs that the run classes
+exist to carry; the run break of Section 11.1 is that finding, and it is worth
+2.3 percentage points of this table.
 
 Read across a row. 0.3.0, which has passthrough and the block coder and nothing
-else, is **8.9 % behind** Base85N on the core corpus. The passthrough of
-Section 8 with NUL admitted, the packed bases of Section 9 and the two run
-classes of Section 10.2 bring that to **1.6 % behind**. The chained gaps of
-Section 10.3 pass it, on both groups.
-
-Every column but the first is a projection and a floor; Section 17 says on what
-grounds.
+else, is 8.9 % behind Base85N on the core corpus. The passthrough of Section 8
+with NUL admitted, the packed bases of Section 9 and the run classes of
+Sections 10.2 and 10.3 put it **2.73 % ahead on the core corpus, 1.43 % ahead
+on Silesia and 1.47 % ahead over both**, with no compressor on either side.
 
 Where the format stands on its own arithmetic rather than on a corpus: the block
 coder is **1.2308 characters per byte against Base85N's 1.25**, 1.56 % denser,
@@ -1206,24 +1280,44 @@ A caller who wants a bound on what one damaged frame destroys can have it for
 0.2 %; one who segments at `MAX_SEGMENT_BYTES` pays 6.3 %, which is why
 Section 10.1 gives compressed segments a bound of their own.
 
-### 17.10 Throughput
+### 17.10 Throughput, and what parallel encoding is worth
 
-Measured on `countries.json`, 1 408 911 bytes, in the reference JavaScript
-implementation of the block coder. These numbers are one machine's and are here
-only to show the shape of the level control, not to be compared against another
-implementation in another language:
+The prototype in `rust/`, release build, on a shared four-core virtual machine.
+Run-to-run spread on this host is wide; read a factor as real and ten percent as
+noise. These are the encoder without compression, since the prototype carries
+no zstd.
 
-| level | ratio | compress | block coder | end to end |
-|---|---|---|---|---|
-| −5 | 0.2491 | 277 MB/s | 283 MB/s | 232 MB/s |
-| 1 | 0.1620 | 368 MB/s | 288 MB/s | 315 MB/s |
-| 3 | 0.1487 | 285 MB/s | 291 MB/s | 254 MB/s |
-| 9 | 0.1174 | 33 MB/s | 293 MB/s | 32 MB/s |
-| 19 | 0.0945 | 2 MB/s | 284 MB/s | 2 MB/s |
+| sample | serial | four threads | chunks spliced or rejoined |
+|---|---|---|---|
+| nci (32 MB) | 114 MB/s | 309 MB/s | 100 % |
+| webster (40 MB) | 91 MB/s | 271 MB/s | 80 % |
+| mr (9.5 MB) | 71 MB/s | 227 MB/s | 100 % |
+| samba (21 MB) | 78 MB/s | 213 MB/s | 100 % |
+| requests-2.32.3.tar | 75 MB/s | 169 MB/s | 100 % |
+| _cffi_backend.so | 60 MB/s | 127 MB/s | 100 % |
+| countries.json | 28 MB/s | 100 MB/s | 100 % |
+| mozilla (49 MB) | 44 MB/s | 70 MB/s | 100 % |
+| bootstrap.css | 99 MB/s | 101 MB/s | too small to chunk |
 
-The compressor dominates at every level above 1, and the packing layer is flat
-across all of them: the size-against-speed control this format offers is zstd's,
-and the format adds a constant to it.
+Section 14.5's arrangement holds. Most chunks were used as their worker wrote
+them or met the sequential pass again at a shared segment boundary; the rest
+were re-encoded outright, and the output is byte-identical to a serial encode
+in every case, which the test suite asserts at four chunk sizes down to a
+single symbol group.
+
+It is worth recording what the first version of that join did, because the
+shape is easy to get wrong. Splicing only where a worker's assumption held
+outright -- an empty accumulator at its first byte -- fired on a fifth to a half
+of chunks, and repairing a whole chunk when it did not left the parallel encoder
+*slower* than the serial one. Bounding the repair at the first segment boundary
+both paths reach is the difference between that and the table above.
+
+**The `simd` feature is not yet worth its flag.** Vectorising the run scan is
+neutral, and four arrangements of a vector fast-forward for the passthrough
+prefix scan all measured slower than the scalar loop. `rust/src/simd.rs`
+records each of them and why: the bytes that stop such a skip are the R-Set
+members and the donors, which are exactly the frequent characters of the text
+the scan runs on, so the skips are too short to pay for the probe.
 
 ### 17.11 What is left on the table
 
@@ -1410,10 +1504,15 @@ what it cannot read rather than silently returning less than it was given.
 
 ---
 
-## 20. Review note
+## 20. Review and feedback are welcome
 
-This document is a concept and is subject to the **four-eyes principle**. Before
-implementation, at least the following are to be read against by a second party:
+This document is a draft, and it is more useful to us reviewed than admired.
+Corrections, objections, "this cannot be implemented as written" and "you have
+measured the wrong thing" are all equally welcome — as issues, pull requests or
+mail. Nothing here is settled by seniority; a counterexample settles it.
+
+Some parts would benefit from a second reader more than others, so if you have
+an hour rather than a week, these are where it is best spent:
 
 * the pair-space argument in Section 5.2, on which all signalling rests;
 * the flush derivation in Section 7.2, the escape's `hi` in 7.1, and the length
@@ -1423,7 +1522,10 @@ implementation, at least the following are to be read against by a second party:
 * the never-worse-than-block-mode guarantee in Section 11.2;
 * the allocation bounds in Section 16, runs included and not only frames.
 
-The measurement caveat at the head of Section 17 is a release blocker, not a
-footnote. Sections 9, 10.2 and 10.3 carry projections rather than measurements,
-the donor profiles must be re-derived for the changed R-Set (Section 17.5), and
-neither corpus can say anything about the packed classes (Section 17.11).
+Two things we already know are open, and would rather hear about early than
+late. The measurement caveat at the head of Section 17 is a release blocker
+rather than a footnote: Sections 9, 10.2 and 10.3 carry projections rather than
+measurements, the donor profiles must be re-derived for the changed R-Set
+(Section 17.5), and neither corpus can say anything about the packed classes
+(Section 17.11). And no implementation has yet encoded a byte against this
+document, so every claim in it is an argument rather than a result.

@@ -6,3 +6,6 @@ bench/train/
 # Generated website (built by site/build.py, published by .github/workflows/pages.yml)
 site/_build/
 _site/
+
+# Rust build artefacts
+rust/target/

@@ -1,0 +1,569 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+//! The encoder: the main loop of specification section 6.4 and the candidate
+//! scan of section 11.1.
+//!
+//! Every candidate is priced in characters against what block mode would have
+//! charged for the same bytes from the same pending-bit state, and the
+//! cheapest wins. Nothing here is a threshold: the tables in section 11.1 are
+//! what the comparison happens to produce, not an input to it.
+
+use crate::error::Result;
+use crate::symbols::*;
+use crate::tables::tuning;
+use crate::tables::*;
+
+/// What the scan found at one position, priced.
+#[derive(Clone, Copy, Debug)]
+struct Candidate {
+    class: u16,
+    /// Bytes consumed.
+    len: usize,
+    /// Characters, flush field included.
+    cost: usize,
+    /// For `RUN`, the repeated byte. For `PT`, mask and profile. For `ZMIX`,
+    /// the number of gaps.
+    a: u32,
+    b: u32,
+}
+
+/// The encoder state a chunk boundary has to agree on. Two encoders that hold
+/// the same state at the same input offset write the same characters from
+/// there on, which is what lets a parallel join splice (section 14.5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct State {
+    acc: Acc,
+    binary_run: usize,
+}
+
+impl State {
+    /// Whether this is the state a speculative worker assumed at its first
+    /// byte: nothing owed, and a segment allowed to open immediately.
+    #[inline]
+    pub fn starts_a_chunk(&self) -> bool {
+        self.acc.n == 0 && self.binary_run >= tuning::binary_run()
+    }
+}
+
+/// Encoder state carried across the main loop.
+pub struct Encoder {
+    pub out: Vec<u8>,
+    acc: Acc,
+    binary_run: usize,
+    /// Where the last segment ended, for the parallel seam of section 14.5.
+    pub last_segment_end: usize,
+    /// Characters produced up to that point.
+    pub chars_at_last_segment: usize,
+    /// Every (input offset, character offset) at which a segment closed, when
+    /// recording is on. These are the points another encoder can join at.
+    pub segment_ends: Vec<(usize, usize)>,
+    record: bool,
+}
+
+impl Encoder {
+    pub fn new() -> Self {
+        Self {
+            out: Vec::new(),
+            acc: Acc::new(),
+            binary_run: usize::MAX / 2,
+            last_segment_end: 0,
+            chars_at_last_segment: 0,
+            segment_ends: Vec::new(),
+            record: false,
+        }
+    }
+
+    /// Record where segments close, for a parallel worker.
+    pub fn recording(mut self) -> Self {
+        self.record = true;
+        self
+    }
+
+    #[inline]
+    pub fn state(&self) -> State {
+        State { acc: self.acc, binary_run: self.binary_run }
+    }
+
+    #[inline]
+    pub fn set_state(&mut self, s: State) {
+        self.acc = s.acc;
+        self.binary_run = s.binary_run;
+    }
+
+    /// Emit the final group into a caller's buffer rather than `self.out`.
+    pub fn finish_into(&mut self, out: &mut Vec<u8>) {
+        let mut tail = Vec::new();
+        self.acc.finish(&mut tail);
+        out.extend_from_slice(&tail);
+    }
+
+    #[inline]
+    fn flush_for_segment(&mut self) {
+        let n_enc = self.acc.n;
+        if n_enc == 0 {
+            return;
+        }
+        let bits = self.acc.pending();
+        if n_enc <= 6 {
+            self.out.push(ALPHABET[bits as usize]);
+        } else {
+            put_pair(bits as u16, &mut self.out);
+        }
+    }
+
+    /// The signal pair: class and the flush flag, specification section 7.1.
+    #[inline]
+    fn put_signal(&mut self, class: u16) {
+        let hi = if self.acc.n >= 8 { 1u16 } else { 0 };
+        put_pair(SIGNAL_MIN + 2 * class + hi, &mut self.out);
+    }
+
+    fn open_segment(&mut self, class: u16) {
+        self.put_signal(class);
+        self.flush_for_segment();
+        self.acc.reset();
+    }
+}
+
+/// Encode `data` as a complete stream.
+pub fn encode(data: &[u8]) -> String {
+    let mut enc = Encoder::new();
+    encode_into(&mut enc, data, true);
+    // Every byte emitted is an alphabet character, so this is ASCII by
+    // construction; the check is one pass and only in debug builds.
+    debug_assert!(enc.out.iter().all(|&b| VALUE_OF[b as usize] != 0xFF));
+    unsafe { String::from_utf8_unchecked(enc.out) }
+}
+
+/// Encode into an existing encoder. `final_flush` is false for a worker of a
+/// parallel encode, which must end on a group boundary rather than flush.
+pub fn encode_into(enc: &mut Encoder, data: &[u8], final_flush: bool) {
+    encode_region(enc, data, 0, data.len());
+    if final_flush {
+        enc.acc.finish(&mut enc.out);
+    }
+}
+
+/// Encode from `start`, taking decisions with the whole of `data` in view but
+/// committing nothing that begins at or after `commit_until`. Returns the
+/// offset actually reached, which is at or past `commit_until` because the
+/// last item committed may run over it.
+///
+/// The lookahead is what makes a parallel encode exact (section 14.5): a
+/// worker whose view stopped at its own boundary would decline segments a
+/// serial encoder takes, and its output could then never be spliced. Reading
+/// past the boundary costs nothing -- the input is shared and read-only -- and
+/// the commit limit is what keeps the pieces from overlapping.
+pub fn encode_region(enc: &mut Encoder, data: &[u8], start: usize, commit_until: usize) -> usize {
+    encode_region_until(enc, data, start, commit_until, &[]).0
+}
+
+/// The same, stopping early at the first offset in `resync` that this encoder
+/// reaches with a segment boundary.
+///
+/// Two encoders that have both just closed a segment ending at the same input
+/// offset are in the same state -- nothing owed, and a segment allowed to open
+/// again -- whatever they did before that. That is what bounds the repair a
+/// parallel join has to do: not a chunk, but the distance to the first place
+/// the two paths provably agree.
+pub fn encode_region_until(
+    enc: &mut Encoder,
+    data: &[u8],
+    start: usize,
+    commit_until: usize,
+    resync: &[(usize, usize)],
+) -> (usize, Option<usize>) {
+    let mut i = start;
+    while i < commit_until {
+        let cand = if enc.binary_run >= tuning::binary_run() {
+            scan(data, i, enc.acc.n)
+        } else {
+            None
+        };
+        match cand {
+            Some(c) => {
+                emit(enc, data, i, &c);
+                i += c.len;
+                enc.binary_run = 0;
+                enc.last_segment_end = i;
+                enc.chars_at_last_segment = enc.out.len();
+                if enc.record {
+                    enc.segment_ends.push((i, enc.out.len()));
+                }
+                if let Some(k) = resync.binary_search_by_key(&i, |r| r.0).ok() {
+                    return (i, Some(k));
+                }
+            }
+            None => {
+                enc.acc.push(data[i] as u32, 8, &mut enc.out);
+                enc.binary_run += 1;
+                i += 1;
+            }
+        }
+    }
+    (i, None)
+}
+
+// ---------------------------------------------------------------------------
+// The candidate scan
+// ---------------------------------------------------------------------------
+
+/// The cheapest segment that can open at `at`, or none if block mode wins.
+fn scan(data: &[u8], at: usize, n: u32) -> Option<Candidate> {
+    let overhead = 2 + flush_chars(n); // signal, flush
+    let mut best: Option<Candidate> = None;
+
+    let mut consider = |c: Candidate| {
+        let (blk, _) = block_cost(c.len, n);
+        if c.cost >= blk {
+            return;
+        }
+        // Cheapest first, then the lower class, then the longer prefix:
+        // canonicity rules 1, 2 and 3 of section 11.3.
+        let better = match &best {
+            None => true,
+            Some(b) => {
+                let (bblk, _) = block_cost(b.len, n);
+                let (gain, bgain) = (blk - c.cost, bblk - b.cost);
+                (gain, b.class, c.len) > (bgain, c.class, b.len)
+            }
+        };
+        if better {
+            best = Some(c);
+        }
+    };
+
+    // --- runs, and runs with gaps -----------------------------------------
+    let run = run_length(data, at);
+    if run >= 2 {
+        let capped = run.min(MAX_SEGMENT_BYTES);
+        if data[at] == 0 {
+            consider(Candidate {
+                class: CLASS_ZRUN,
+                len: capped,
+                cost: overhead + length_chars(capped),
+                a: 0,
+                b: 0,
+            });
+            if let Some(c) = scan_zmix(data, at, overhead) {
+                consider(c);
+            }
+        } else {
+            consider(Candidate {
+                class: CLASS_RUN,
+                len: capped,
+                cost: overhead + length_chars(capped) + 2,
+                a: data[at] as u32,
+                b: 0,
+            });
+        }
+    }
+
+    // --- packed bases ------------------------------------------------------
+    let mut live = PACKED_MEMBERSHIP[data[at] as usize];
+    if live != 0 {
+        // One pass over the input, narrowing the set of classes still alive,
+        // records where each class had to stop.
+        let mut end = [at; 13];
+        let mut j = at;
+        let mut run = 1usize;
+        let limit = data.len().min(at + MAX_SEGMENT_BYTES);
+        while j < limit && live != 0 {
+            if j > at {
+                run = if data[j] == data[j - 1] { run + 1 } else { 1 };
+                if run >= tuning::run_break(data[j] == 0) {
+                    j -= run - 1;
+                    break;
+                }
+            }
+            let m = PACKED_MEMBERSHIP[data[j] as usize];
+            let dead = live & !m;
+            let mut d = dead;
+            while d != 0 {
+                let c = d.trailing_zeros() as usize;
+                end[c] = j;
+                d &= d - 1;
+            }
+            live &= m;
+            j += 1;
+        }
+        let mut d = live;
+        while d != 0 {
+            let c = d.trailing_zeros() as usize;
+            end[c] = j;
+            d &= d - 1;
+        }
+        for c in 0..13 {
+            let len = end[c] - at;
+            if len < 2 {
+                continue;
+            }
+            let w = PACKED[c].w;
+            consider(Candidate {
+                class: CLASS_PACKED_FIRST + c as u16,
+                len,
+                cost: overhead + length_chars(len) + packed_chars(len, w),
+                a: 0,
+                b: 0,
+            });
+        }
+    }
+
+    // --- passthrough -------------------------------------------------------
+    if let Some(c) = scan_passthrough(data, at, overhead) {
+        consider(c);
+    }
+
+    best
+}
+
+#[inline]
+fn run_length(data: &[u8], at: usize) -> usize {
+    let b = data[at];
+    #[cfg(feature = "simd")]
+    let mut j = crate::simd::run_end(data, at);
+    #[cfg(not(feature = "simd"))]
+    let mut j = at + 1;
+    while j < data.len() && data[j] == b {
+        j += 1;
+    }
+    j - at
+}
+
+/// A chain of zero runs separated by gaps of one fixed width: section 10.3.
+fn scan_zmix(data: &[u8], at: usize, overhead: usize) -> Option<Candidate> {
+    let first = run_length(data, at);
+    let after = at + first;
+    if after >= data.len() {
+        return None;
+    }
+    // The gap width the chain will fix: how many non-zero bytes follow.
+    let mut g = 0usize;
+    while after + g < data.len() && data[after + g] != 0 && g < 8 {
+        g += 1;
+    }
+    if g == 0 || g > 8 || after + g >= data.len() || data[after + g] != 0 {
+        return None;
+    }
+
+    let mut cost = overhead + length_chars(first);
+    let mut bytes = first;
+    let mut gaps = 0usize;
+    let mut pos = after;
+    // Every further link must present exactly `g` non-zero bytes and then at
+    // least one zero. Canonicity rule 8: extend while that holds.
+    loop {
+        if pos + g > data.len() || bytes + g >= MAX_SEGMENT_BYTES {
+            break;
+        }
+        if data[pos..pos + g].iter().any(|&b| b == 0) {
+            break;
+        }
+        if pos + g >= data.len() || data[pos + g] != 0 {
+            break;
+        }
+        let zeros = run_length(data, pos + g);
+        if bytes + g + zeros > MAX_SEGMENT_BYTES || gaps + 1 > 89 {
+            break;
+        }
+        cost += packed_chars(g, 8) + length_chars(zeros);
+        bytes += g + zeros;
+        gaps += 1;
+        pos += g + zeros;
+    }
+    if gaps == 0 {
+        return None;
+    }
+    Some(Candidate {
+        class: CLASS_ZMIX_FIRST + (g as u16 - 1),
+        len: bytes,
+        cost: cost + length_chars(gaps), // the count field
+        a: g as u32,
+        b: gaps as u32,
+    })
+}
+
+/// The passthrough prefix scan of section 11.1: how far one segment reaches,
+/// and which mask and profile describe it.
+fn scan_passthrough(data: &[u8], at: usize, overhead: usize) -> Option<Candidate> {
+    let limit = data.len().min(at + MAX_SEGMENT_BYTES);
+    // A segment of one byte never pays, and on binary input the scan fails
+    // here at almost every position -- before any donor bookkeeping.
+    if !PT_CARRIABLE[data[at] as usize] || at + 1 >= limit || !PT_CARRIABLE[data[at + 1] as usize] {
+        return None;
+    }
+    let mut mask: u8 = 0;
+    let mut k: u8 = 0;
+    // Per profile, the lowest donor rank any literal in the segment holds.
+    let mut min_rank = [8u8; NUM_PROFILES];
+    let mut j = at;
+    let mut profile = 0usize;
+
+    // How long the run ending at j-1 is, so the scan can hand a long one to
+    // the run classes rather than carrying it at one character per byte.
+    let mut run = 1usize;
+    while j < limit {
+        let byte = data[j];
+        if j > at {
+            run = if byte == data[j - 1] { run + 1 } else { 1 };
+            if run >= tuning::run_break(byte == 0) {
+                j -= run - 1;
+                break;
+            }
+        }
+        let (new_mask, new_k, mut new_min) = {
+            let r = R_INDEX[byte as usize];
+            if r != 0xFF {
+                let bit = 1u8 << r;
+                let nk = k + u8::from(mask & bit == 0);
+                (mask | bit, nk, min_rank)
+            } else if VALUE_OF[byte as usize] != 0xFF {
+                let mut m = min_rank;
+                for p in 0..NUM_PROFILES {
+                    let rank = DONOR_RANK[p][byte as usize];
+                    if rank < m[p] {
+                        m[p] = rank;
+                    }
+                }
+                (mask, k, m)
+            } else {
+                break; // not representable at all
+            }
+        };
+        // The smallest profile that still has enough donors above every
+        // literal already committed.
+        let mut viable = None;
+        for p in 0..NUM_PROFILES {
+            if new_min[p] >= new_k {
+                viable = Some(p);
+                break;
+            }
+        }
+        let Some(p) = viable else { break };
+        mask = new_mask;
+        k = new_k;
+        std::mem::swap(&mut min_rank, &mut new_min);
+        profile = p;
+        j += 1;
+    }
+
+    let len = j - at;
+    if len < 2 {
+        return None;
+    }
+    // A shorthand saves the parameter pair where it applies (rule 6).
+    let shorthand = if profile == 0 {
+        SHORTHAND_MASK.iter().position(|&m| m == mask).map(|i| i as u16 + 1)
+    } else {
+        None
+    };
+    let (class, params) = match shorthand {
+        Some(c) => (c, 0),
+        None => (CLASS_PT, 2),
+    };
+    Some(Candidate {
+        class,
+        len,
+        cost: overhead + params + length_chars(len) + len,
+        a: mask as u32,
+        b: profile as u32,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Emitting
+// ---------------------------------------------------------------------------
+
+fn emit(enc: &mut Encoder, data: &[u8], at: usize, c: &Candidate) {
+    enc.open_segment(c.class);
+    match c.class {
+        CLASS_ZRUN => {
+            put_length(c.len, &mut enc.out);
+        }
+        CLASS_RUN => {
+            put_length(c.len, &mut enc.out);
+            put_pair(c.a as u16, &mut enc.out);
+        }
+        CLASS_ZMIX_FIRST..=CLASS_ZMIX_LAST => {
+            let g = c.a as usize;
+            put_length(c.b as usize, &mut enc.out); // the gap count
+            let mut pos = at;
+            let end = at + c.len;
+            let mut gaps = c.b;
+            loop {
+                let zeros = run_length(data, pos);
+                put_length(zeros, &mut enc.out);
+                pos += zeros;
+                if gaps == 0 {
+                    break;
+                }
+                // Whole symbols with the last one zero-padded, exactly as a
+                // packed payload: the decoder reads a gap the same way it
+                // reads a packed base, off the top of the symbol.
+                let mut a = Acc::new();
+                for &b in &data[pos..pos + g] {
+                    a.push(b as u32, 8, &mut enc.out);
+                }
+                a.finish_padded(&mut enc.out);
+                pos += g;
+                gaps -= 1;
+            }
+            debug_assert_eq!(pos, end);
+        }
+        CLASS_PACKED_FIRST..=CLASS_PACKED_LAST => {
+            let ci = (c.class - CLASS_PACKED_FIRST) as usize;
+            let w = PACKED[ci].w;
+            put_length(c.len, &mut enc.out);
+            let mut a = Acc::new();
+            for &b in &data[at..at + c.len] {
+                a.push(PACKED_INDEX[ci][b as usize] as u32, w, &mut enc.out);
+            }
+            a.finish_padded(&mut enc.out);
+        }
+        _ => {
+            // Passthrough: class 0 carries mask and profile, 1..=6 imply them.
+            if c.class == CLASS_PT {
+                put_pair((c.a + 256 * c.b) as u16, &mut enc.out);
+            }
+            put_length(c.len, &mut enc.out);
+            let donors = donor_table(c.a as u8, c.b as usize);
+            for &b in &data[at..at + c.len] {
+                let r = R_INDEX[b as usize];
+                enc.out.push(if r != 0xFF && (c.a as u8) & (1 << r) != 0 {
+                    donors[r as usize]
+                } else {
+                    b
+                });
+            }
+        }
+    }
+}
+
+/// Which alphabet character stands in for each set bit of `mask`.
+pub fn donor_table(mask: u8, profile: usize) -> [u8; R_LEN] {
+    let mut t = [0u8; R_LEN];
+    let mut rank = 0usize;
+    for j in 0..R_LEN {
+        if mask & (1 << j) != 0 {
+            t[j] = PROFILES[profile][rank];
+            rank += 1;
+        }
+    }
+    t
+}
+
+impl Acc {
+    /// A packed payload pads its last symbol with zero bits rather than
+    /// emitting a short final group: specification section 9.
+    pub fn finish_padded(&mut self, out: &mut Vec<u8>) {
+        if self.n > 0 {
+            let width = SYMBOL_BITS - self.n;
+            self.push(0, width, out);
+        }
+        self.reset();
+    }
+}
+
+pub fn _unused(_: Result<()>) {}
