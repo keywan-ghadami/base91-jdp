@@ -31,7 +31,10 @@
     "bench:rs": "node --max-old-space-size=4096 bench/rsstudy.js",
     "corpus": "python3 bench/corpus.py",
     "corpus:core": "python3 bench/corpus.py --core",
-    "bench:zstd": "node bench/zstdprojection.js"
+    "bench:zstd": "node bench/zstdprojection.js",
+    "bench:uncompressed": "node bench/uncompressed.js",
+    "site": "python3 site/build.py --serve",
+    "site:check": "python3 site/build.py && python3 site/check_links.py"
   },
   "keywords": [
     "base91",
