@@ -266,6 +266,25 @@ Nothing on a megabyte, 11 % on a protocol field. What it buys is the crossover:
 compresses where compression wins goes from 0.9252 to **0.9194** — the first
 time compression has improved that number at all.
 
+**Where compression starts to pay.** `examples/firstwin.rs` sweeps it byte by
+byte, against the whole plain encoder rather than against block mode:
+
+| payload | level −5 | level 3 | level 19 |
+|---|---|---|---|
+| zero-padded record | 48 | **43** | 44 |
+| repeated JSON record | 79 | 79 | **77** |
+| repeated log line | 157 | 113 | **113** |
+| repeated hex digest | 277 | 114 | **111** |
+| English prose | 285 | 103 | **93** |
+| high-entropy binary | never | never | never |
+
+At level 3 the same table read 72, 90, 125, 134 and 137 before the frame
+headers came off. It is not a constant and not monotone — prose at level 3
+first wins at 103 bytes but only wins at every longer length from 121 — so
+`encode_auto` compares rather than consulting a threshold. Note what level −5
+costs on short payloads: choosing it for throughput also gives up compression
+on everything under a few hundred bytes.
+
 The 128 KiB ceiling is why class 17 still exists. Cutting a large input into
 128 KiB pieces so that every segment could be stripped costs 1.9 % at level −5
 and 4.7 % at levels 3 and 9 on the core corpus, because each piece starts with

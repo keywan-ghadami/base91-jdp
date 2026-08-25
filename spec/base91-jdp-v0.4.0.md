@@ -1661,6 +1661,38 @@ the JPEG. The rule an encoder can follow is one line: **entropy below the
 threshold, compress and do not look; above it, do not compress and do not
 scan.**
 
+**And where does it start?** Byte by byte, the shortest payload on which a
+compressed segment is smaller than the plain encoder — runs, packed bases and
+passthrough included, which is what a caller actually gives up:
+
+| payload | level −5 | level 3 | level 19 |
+|---|---|---|---|
+| zero-padded record | 48 | **43** | 44 |
+| repeated JSON record | 79 | 79 | **77** |
+| repeated log line | 157 | 113 | **113** |
+| repeated hex digest | 277 | 114 | **111** |
+| English prose | 285 | 103 | **93** |
+| high-entropy binary | never | never | never |
+
+Three things read off this table. **The crossover is data-dependent and not a
+constant**, from 43 bytes on a record full of zeros to 285 on prose at the
+cheapest level, so an encoder cannot decide by length alone; Section 11.2's
+comparison is the decision. **The cheap levels have a much later crossover than
+the expensive ones** — level −5 spends bytes on a weaker match search that a
+short payload cannot amortise — so a caller choosing −5 for throughput is also
+choosing to give up compression on everything under a few hundred bytes.
+**Nothing compresses high-entropy input at any length**, which is Section 11.5
+from the other side.
+
+The numbers are not quite monotone in length: prose at level 3 first wins at
+103 bytes but only wins at *every* longer length from 121, because both sides
+round up to whole symbols at different rates. An encoder MUST compare rather
+than consult a threshold, for the same reason Section 11.1 gives.
+
+Section 17.20 halved several of these. Before it the same table read 72, 90,
+125, 134 and 137 at level 3 — the payload had to be large enough to amortise
+eleven bytes of frame header that said nothing.
+
 ### 17.18 Whether zstd makes the classes unnecessary
 
 It does not, and the reason is a range it cannot reach.
@@ -1786,13 +1818,14 @@ the payload:
 | 32-byte zero-padded record | 0.469 | 0.844 | plain |
 | 64 bytes of the same | 0.469 | 0.453 | zstd |
 
-Compression starts winning somewhere between fifty and a hundred bytes, and
-beneath that the classes are not one option of two — they are the only thing
-there is. Even *with* compression applied wherever it wins, dropping the run
-classes costs 3.0 % over the short corpus.
+Compression starts winning between 43 and 285 bytes depending on the data and
+the level — Section 17.17 sweeps it — and beneath that the classes are not one
+option of two, they are the only thing there is. Even *with* compression
+applied wherever it wins, dropping the run classes costs 3.0 % over the short
+corpus.
 
-These are the numbers after Section 17.20; before it the crossover sat at
-twice the length, and the run classes carried correspondingly more.
+These are the numbers after Section 17.20; before it every crossover sat
+further out, and the run classes carried correspondingly more.
 
 **`ZMIX` could go, and has.** It cost 0.53 % on the core corpus and 0.15 % on Silesia
 without a compressor, nothing at all on the short corpus, and nothing anywhere

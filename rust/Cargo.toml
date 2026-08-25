@@ -88,3 +88,6 @@ required-features = ["zstd"]
 [[example]]
 name = "shortnow"
 required-features = ["zstd"]
+[[example]]
+name = "firstwin"
+required-features = ["zstd"]
