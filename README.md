@@ -3,7 +3,8 @@
 **basE91 with a JSON-safe alphabet, LZ4 inside, and error correction that costs
 0.1 %.**
 
-[![Spec](https://img.shields.io/badge/spec-v0.3.0%20draft-yellow)](spec/base91-jdp-v0.3.0.md)
+[![Spec](https://img.shields.io/badge/spec-v0.3.0%20draft-yellow)](spec/history/base91-jdp-v0.3.0.md)
+[![Next](https://img.shields.io/badge/next-v0.4.0%20draft-orange)](spec/base91-jdp-v0.4.0.md)
 [![License](https://img.shields.io/badge/license-MPL--2.0-green)](LICENSE)
 
 ```js
@@ -334,7 +335,7 @@ here and better than deflating it first, which would expand it.
 
 ## Specification
 
-[`spec/base91-jdp-v0.3.0.md`](spec/base91-jdp-v0.3.0.md) defines the format
+[`spec/history/base91-jdp-v0.3.0.md`](spec/history/base91-jdp-v0.3.0.md) defines the format
 completely: the alphabet, the fixed thirteen-bit symbol and the eighty-nine
 values it frees, the marker and the modes, passthrough and its header, the
 framed body and its damage bound, the side channel, error correction, the LZ4
@@ -345,6 +346,12 @@ Status is **draft**. The format is complete, implemented and measured, but it
 has not been in the field. Eighty-three markers are unassigned and one is
 reserved to say "a longer header follows", so there is room without anything
 being spent on it.
+
+**A successor is in draft.** [`spec/base91-jdp-v0.4.0.md`](spec/base91-jdp-v0.4.0.md)
+replaces the head-of-stream mode markers with typed segments, LZ4 with zstd,
+and the error correction with a run of classes that measure better on both
+benchmark corpora. It is not implemented here yet, and everything this README
+describes is 0.3.0, which is what the code in `src/` does.
 
 ## Tests and benchmarks
 
