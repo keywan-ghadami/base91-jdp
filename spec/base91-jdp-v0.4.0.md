@@ -1060,9 +1060,9 @@ integrity claim (Section 2.3). The decoder is the security-relevant surface.
 
 ## 17. Measurements
 
-Full method, per-file figures and every sweep: `bench/results/RESULTS.md`. The
-corpus is fetched by `bench/corpus.py`; the projections below are produced by
-`bench/uncompressed.js` and `bench/zstdprojection.js`.
+The corpus is fetched by `bench/corpus.py` and described in `bench/README.md`;
+every figure below is produced by an example in `rust/`, which encodes the
+corpus and decodes it again.
 
 > **What is and is not measured.** Everything below is the prototype in `rust/`
 > encoding the corpus and decoding it again, except: Section 17.2, which is the

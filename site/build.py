@@ -263,26 +263,34 @@ PAGES = [
         strip_first_heading=True,
     ),
     Page(
-        source="bench/results/RESULTS.md",
+        source="bench/README.md",
         output="benchmarks/index.html",
-        title="Benchmark results",
+        title="Benchmarks",
         nav_label="Benchmarks",
         toc=True,
         subtitle=(
-            "base91-jdp against Base64, Ascii85, basE91 and Base85N, on two "
-            "corpora and 218 MB - including where they win."
+            "The three corpora the measurements run on, and how to reproduce "
+            "them. The numbers themselves are in the specification."
         ),
         strip_first_heading=True,
     ),
     Page(
-        source="bench/results/RS.md",
-        output="benchmarks/reed-solomon.html",
-        title="The Reed-Solomon study",
+        source="rust/README.md",
+        output="implementation.html",
+        title="The implementation",
+        nav_label="Implementation",
         toc=True,
         subtitle=(
-            "What error correction over GF(2^13) costs and repairs, and why "
-            "0.4.0 spends the space differently."
+            "A Rust encoder and decoder for v0.4.0, and what building it "
+            "found that the arithmetic had missed."
         ),
+        strip_first_heading=True,
+    ),
+    Page(
+        source="history/README.md",
+        output="history.html",
+        title="Superseded work",
+        subtitle="What implemented or measured a version that is no longer the format.",
         strip_first_heading=True,
     ),
     Page(
@@ -306,9 +314,12 @@ PATH_TO_PAGE = {
     "spec/history": "spec/history/index.html",
     **{s["path"]: s["path"].replace(".md", ".html")
        for s in SPECS + HISTORIC_SPECS},
-    "bench/results/RESULTS.md": "benchmarks/index.html",
-    "bench/results/RS.md": "benchmarks/reed-solomon.html",
+    "bench/README.md": "benchmarks/index.html",
     "bench": "benchmarks/index.html",
+    "rust/README.md": "implementation.html",
+    "rust": "implementation.html",
+    "history/README.md": "history.html",
+    "history": "history.html",
     "CHANGELOG.md": "changelog.html",
 }
 
@@ -368,8 +379,8 @@ TEMPLATE = """<!DOCTYPE html>
 </div>
 <footer class="site-footer">
   <div class="wrap">
-    <p><strong>base91-jdp</strong> - specification v{spec_version} (draft), one
-    reference implementation in JavaScript.</p>
+    <p><strong>base91-jdp</strong> - specification v{spec_version} (draft), with
+    a prototype encoder and decoder in Rust.</p>
     <p class="footer-warn">Specification and implementation were drafted with AI
     assistance and then verified against measurements, and reviews - security,
     documentation, usability, anything - are wanted. The specification carries

@@ -1,65 +1,22 @@
 {
-  "name": "base91-jdp",
-  "version": "0.3.0",
-  "description": "basE91 on a JSON-safe alphabet, with passthrough, LZ4 and error correction",
+  "name": "base91-jdp-tools",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Corpus and website tooling for base91-jdp. The format itself is specified in spec/ and implemented in rust/; this manifest publishes nothing.",
   "type": "module",
-  "main": "./src/index.js",
-  "exports": {
-    ".": "./src/index.js",
-    "./codec": "./src/codec.js",
-    "./package.json": "./package.json"
-  },
-  "bin": {
-    "base91jdp": "./bin/base91jdp.js"
-  },
-  "files": [
-    "src",
-    "bin",
-    "spec",
-    "README.md",
-    "CHANGELOG.md",
-    "LICENSE"
-  ],
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "bench": "node bench/bench.js",
-    "bench:pipeline": "node bench/pipeline.js",
-    "bench:sweep": "node bench/sweep.js",
-    "bench:signal": "node bench/signalchar.js",
-    "bench:fill": "node bench/fillbound.js",
-    "bench:gzip": "node bench/gzipdecision.js",
-    "bench:rs": "node --max-old-space-size=4096 bench/rsstudy.js",
     "corpus": "python3 bench/corpus.py",
     "corpus:core": "python3 bench/corpus.py --core",
     "corpus:short": "python3 bench/corpus.py --short",
-    "bench:zstd": "node bench/zstdprojection.js",
-    "bench:uncompressed": "node bench/uncompressed.js",
     "site": "python3 site/build.py --serve",
     "site:check": "python3 site/build.py && python3 site/check_links.py"
   },
-  "keywords": [
-    "base91",
-    "base64",
-    "base85",
-    "encoding",
-    "binary-to-text",
-    "json",
-    "codec",
-    "lz4",
-    "compression",
-    "reed-solomon",
-    "error-correction"
-  ],
   "author": "Keywan Ghadami",
   "license": "MPL-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/keywan-ghadami/base91-jdp.git"
   },
-  "bugs": {
-    "url": "https://github.com/keywan-ghadami/base91-jdp/issues"
-  },
-  "homepage": "https://github.com/keywan-ghadami/base91-jdp#readme",
   "engines": {
     "node": ">=18.11"
   }

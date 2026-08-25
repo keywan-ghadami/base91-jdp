@@ -947,7 +947,8 @@ security-relevant surface.
 
 ## 18. Measurements
 
-Full method, per-file numbers and every sweep: `bench/results/RESULTS.md`.
+Full method, per-file numbers and every sweep:
+`history/javascript-v0.3.0/results/RESULTS.md`.
 
 ### 18.1 Corpus
 

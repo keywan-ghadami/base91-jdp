@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — v0.4.0 draft
+
+A different format, not a revision of the last one: head-of-stream mode markers
+became typed segments, LZ4 became zstd, and the Reed-Solomon layer went. A
+0.3.0 stream and a 0.4.0 stream do not interoperate and neither decoder reads
+the other's output. The specification is `spec/base91-jdp-v0.4.0.md` and its
+Sections 18.1, 18.4 and 18.5 say why each thing went.
+
+The reference implementation moved with it. v0.4.0 is implemented in
+`rust/`; the JavaScript package that implemented v0.3.0 is complete, tested and
+kept under `history/javascript-v0.3.0/`, where it is no longer published to npm
+and no longer maintained. The repository root no longer ships a library: what
+is at the root is the specification, the corpora and the tooling.
+
+Everything below this line is the history of v0.3.0 and earlier.
+
+---
+
 The format is a draft and has had no users, so nothing here is a compatibility
 note. These entries exist so that we can tell which version we mean when we
 talk about one.

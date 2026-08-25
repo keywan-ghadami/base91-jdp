@@ -45,7 +45,7 @@ function base85nSizes(dir) {
   try {
     const files = corpus.map((f) => join(dir ?? CORPUS_DIR, f.name));
     const out = execFileSync('go', ['run', '.', ...files], {
-      cwd: join(BENCH_DIR, 'base85n'),
+      cwd: join(BENCH_DIR, '..', '..', '..', 'bench', 'base85n'),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });

@@ -9,3 +9,6 @@ _site/
 
 # Rust build artefacts
 rust/target/
+
+# Python bytecode
+__pycache__/

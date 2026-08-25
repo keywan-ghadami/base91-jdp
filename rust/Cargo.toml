@@ -41,3 +41,37 @@ rand = "0.9"
 opt-level = 3
 lto = true
 codegen-units = 1
+
+# Examples that measure the compressed class only build with it.
+[[example]]
+name = "ablate"
+required-features = ["zstd"]
+
+[[example]]
+name = "compress"
+required-features = ["zstd"]
+
+[[example]]
+name = "compresscorpus"
+required-features = ["zstd"]
+
+[[example]]
+name = "crossover"
+required-features = ["zstd"]
+
+[[example]]
+name = "decide"
+required-features = ["zstd"]
+
+[[example]]
+name = "frames"
+required-features = ["zstd"]
+
+[[example]]
+name = "longdata"
+required-features = ["zstd"]
+
+[[example]]
+name = "norun"
+required-features = ["zstd"]
+

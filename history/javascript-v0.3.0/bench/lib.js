@@ -7,7 +7,9 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const BENCH_DIR = dirname(fileURLToPath(import.meta.url));
-export const CORPUS_DIR = join(BENCH_DIR, 'corpus');
+// The corpus itself did not move into the history directory: it is fetched by
+// bench/corpus.py at the repository root and shared with the current version.
+export const CORPUS_DIR = join(BENCH_DIR, '..', '..', '..', 'bench', 'corpus');
 
 // The benchmark corpus is the one base85n publishes its numbers on: 13 real
 // files, 6.52 MB, fetched by bench/corpus.py from pinned upstream archives.
@@ -34,7 +36,7 @@ export const TEXTUAL = new Set(['json', 'code', 'spec', 'prose']);
 export function loadCorpus() {
   if (!existsSync(CORPUS_DIR)) {
     throw new Error(
-      `corpus missing -- run: python3 ${join(BENCH_DIR, 'corpus.py')}`,
+      `corpus missing -- run: python3 ${'bench/corpus.py'}`,
     );
   }
   const names = readdirSync(CORPUS_DIR).filter((n) => CATEGORY[n]);

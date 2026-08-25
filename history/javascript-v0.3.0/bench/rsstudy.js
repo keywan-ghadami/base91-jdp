@@ -686,7 +686,7 @@ function m6({ trials = 3000 } = {}) {
   let out;
   try {
     out = execFileSync('go', ['run', './damage', tmp, String(trials)], {
-      cwd: join(BENCH_DIR, 'base85n'),
+      cwd: join(BENCH_DIR, '..', '..', '..', 'bench', 'base85n'),
       encoding: 'utf8',
       env: { ...process.env, GOFLAGS: '-mod=mod' },
     });
