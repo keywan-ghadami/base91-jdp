@@ -785,6 +785,14 @@ Where an encoder aligns its windows to absolute offsets in the stream, the
 decision is a pure function of the bytes in the window and the parallel
 arrangement of Section 14.5 still produces byte-identical output.
 
+**The same signal answers a second question.** Whether to compress at all is
+the comparison of Section 11.2, and building both candidates to make it costs
+an order of magnitude. It need not be built: entropy below the threshold says
+compression will pay *and* that the uncompressed path would be the slow one,
+and entropy above it says the reverse. Section 17.17 measures a caller deciding
+this way against one building both, and over the core corpus they agree on
+every file at every level, at three to thirteen times the throughput.
+
 This is an encoder-side choice and it changes what is emitted, so an encoder
 that takes it does not satisfy Section 11.3 against one that does not. Like the
 class subsetting of Section 15.5, it MUST be documented rather than assumed.
@@ -1578,6 +1586,60 @@ itself goes to 1.039. That neither criterion dominates is what says the problem
 is not the criterion but the greediness. Section 14.1 already observes that a
 short input can be classified exactly rather than heuristically, and this group
 is small enough to settle what that would be worth.
+
+### 17.17 Compress, or not
+
+The question a caller asks first, and on the corpus it has a short answer.
+`countries.json`, 1 408 911 bytes:
+
+| | chars/byte | encode | decode |
+|---|---|---|---|
+| no compressor | 0.8772 | 37 MB/s | 128 MB/s |
+| **zstd −5** | **0.2518** | **454 MB/s** | **249 MB/s** |
+| zstd 1 | 0.1635 | 443 MB/s | 288 MB/s |
+| zstd 9 | 0.1206 | 60 MB/s | 712 MB/s |
+| zstd 19 | 0.0986 | 2 MB/s | 819 MB/s |
+
+**There is no trade-off here to weigh.** At level −5 the output is three and a
+half times smaller *and* twelve times faster to produce, and it decodes twice
+as fast on top. Everything up to level 9 is both smaller and faster than not
+compressing.
+
+That is not a paradox, it is Section 17.12 read from the other end. The
+candidate scan is expensive exactly on the data that compresses well: JSON is
+full of runs of spaces, quoted strings and digit fields, so the scan finds
+something at almost every position and takes the slow path at almost every
+position. Compressing first hands the container a payload with nothing in it
+to look for, and the container runs at 3.3 GB/s.
+
+Where it reverses, it reverses completely. `grace_hopper.jpg`:
+
+| | chars/byte | encode |
+|---|---|---|
+| **no compressor** | **1.2308** | **2 493 MB/s** |
+| zstd −5 | 1.2311 | 1 229 MB/s |
+| zstd 9 | 1.2311 | 332 MB/s |
+
+Compression gains nothing on a JPEG and costs half the throughput at the
+cheapest level. The uncompressed path is fast here for the same reason the
+compressed path is fast on JSON: Section 11.5's decision fires, and the scan
+never runs.
+
+**One histogram decides it.** The signal that says the scan will be expensive
+is the signal that says compression will pay, and it is the same entropy sample
+Section 11.5 already takes. Over the core corpus, deciding from it against
+building both candidates as Section 11.2 requires:
+
+| | ratio, level −5 | ratio, level 3 | agrees with Section 11.2 |
+|---|---|---|---|
+| build both | 0.52273 | 0.34444 | — |
+| decide from the sample | 0.52273 | 0.34444 | 13 files of 13 |
+
+Identical output on every file at every level tried, at three to thirteen times
+the throughput — 477 MB/s against 30 on `countries.json`, 2 258 against 766 on
+the JPEG. The rule an encoder can follow is one line: **entropy below the
+threshold, compress and do not look; above it, do not compress and do not
+scan.**
 
 ### 17.15 What is left on the table
 

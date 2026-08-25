@@ -34,6 +34,23 @@ fn main() {
         // against: the same bytes, already compressed, through block mode.
         let frame = zstd::bulk::compress(&data, 3).unwrap();
 
+        // No compressor at all: the question a caller actually asks first.
+        let plain = base91_jdp::encode(&data);
+        assert_eq!(base91_jdp::decode(&plain).unwrap(), data);
+        let plain_enc = rate(data.len(), || {
+            std::hint::black_box(base91_jdp::encode(&data).len());
+        });
+        let plain_dec = rate(data.len(), || {
+            std::hint::black_box(base91_jdp::decode(&plain).unwrap().len());
+        });
+        println!(
+            "| none | {:.4} | {:.0} MB/s | -- | {:.0} MB/s | {:.0} MB/s |",
+            plain.len() as f64 / data.len() as f64,
+            plain_enc,
+            3300.0,
+            plain_dec
+        );
+
         for level in [-5, -1, 1, 3, 9, 15, 19] {
             let text = base91_jdp::encode_zstd(&data, level).unwrap();
             assert_eq!(base91_jdp::decode(&text).unwrap(), data);

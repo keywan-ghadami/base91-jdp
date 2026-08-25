@@ -66,6 +66,27 @@ pub fn encode_auto(data: &[u8], level: i32) -> std::io::Result<String> {
     Ok(if compressed.len() < plain.len() { compressed } else { plain })
 }
 
+/// Decide whether to compress from the same entropy sample that decides
+/// whether to scan, and build only the candidate that decision names.
+///
+/// [`encode_auto`] is what section 11.2 asks for and it costs an order of
+/// magnitude, because building the uncompressed candidate means running the
+/// scan over data the scan has plenty to find in. The signal that says the
+/// scan will be expensive is the same one that says compression will pay:
+/// low entropy. One histogram over a kilobyte answers both.
+///
+/// The threshold is [`crate::detect::ENTROPY_BITS`], unchanged. On the core
+/// corpus it agrees with `encode_auto` on all thirteen files.
+pub fn encode_smart(data: &[u8], level: i32) -> std::io::Result<String> {
+    if crate::detect::is_block(data, true) {
+        // Already compressed, or close enough that nothing will come off it.
+        // The plain path then costs nothing either: section 11.5 skips the
+        // scan for exactly this input.
+        return Ok(encode(data));
+    }
+    encode_zstd(data, level)
+}
+
 /// Characters a compressed encode would occupy, without building it. Cheaper
 /// than [`encode_zstd`] by the packing, which is what an encoder wanting only
 /// the comparison of section 11.2 needs.

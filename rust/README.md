@@ -168,6 +168,25 @@ Ranking by saving per byte instead is *worse* on both corpora, which says the
 problem is the greediness rather than the criterion. An exact segmentation over
 the pending-bit state is affordable at these sizes and nobody has measured it.
 
+**Compress, or not — for `countries.json` there is nothing to weigh.**
+
+| | chars/byte | encode | decode |
+|---|---|---|---|
+| no compressor | 0.8772 | 37 MB/s | 128 MB/s |
+| **zstd −5** | **0.2518** | **454 MB/s** | **249 MB/s** |
+| zstd 9 | 0.1206 | 60 MB/s | 712 MB/s |
+
+Three and a half times smaller and twelve times faster, decoding twice as fast
+on top; everything up to level 9 beats not compressing on both axes. The scan
+is expensive exactly on the data that compresses well, and compressing first
+hands the container a payload with nothing in it to look for.
+
+It reverses completely on a JPEG — 1.2308 at 2 493 MB/s uncompressed against
+1.2311 at 1 229 compressed — and the same entropy sample tells the two apart.
+`encode_smart` decides from it and builds only one candidate; over the core
+corpus it produces byte-identical output to `encode_auto`'s build-both on all
+thirteen files at every level tried, at three to thirteen times the throughput.
+
 ## A feature flag for more speed
 
 `--features simd` needs **nightly**, because `std::simd` is unstable. It is the
