@@ -6,10 +6,18 @@ justifies, and is produced by the examples in
 [`rust/`](../rust/README.md). This directory holds what those examples read.
 
 ```sh
-python3 bench/corpus.py            # fetch every group (about 210 MB)
-python3 bench/corpus.py --core     # the thirteen core files only
-python3 bench/corpus.py --short    # the authored field samples only
+bench/fetch.sh                     # core and short, what CI measures
+bench/fetch.sh all                 # adds silesia: 202 MiB
 ```
+
+The corpus itself lives in
+[binary2textbench](https://github.com/keywan-ghadami/binary2textbench), which
+measures this codec against Base64, classic basE91, Ascii85, Base85N and
+Base94Max on the same bytes. It used to live here, in `bench/corpus.py` and
+`bench/wire_samples.py`; Base85N carried a second copy of the same thing, and
+two corpus generators that are supposed to agree are a bug waiting to happen.
+`fetch.sh` fills `bench/corpus/` exactly as before, so every example in
+[`rust/`](../rust/README.md) reads it unchanged.
 
 ## The three groups
 

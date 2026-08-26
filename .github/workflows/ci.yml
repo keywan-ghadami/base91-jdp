@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/base85n-checkout
       - uses: dtolnay/rust-toolchain@stable
       - name: Test, with the compressed class
         run: cargo test --release --manifest-path rust/Cargo.toml
@@ -28,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/base85n-checkout
       - uses: dtolnay/rust-toolchain@nightly
       # The feature may only ever make the same decisions faster, so the whole
       # suite runs under it and must agree character for character.
@@ -38,14 +40,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/base85n-checkout
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+      # The corpus lives in binary2textbench now. fetch.sh fills bench/corpus/
+      # exactly as bench/corpus.py used to, so the examples below are unchanged.
       - name: Fetch the core and short corpora
-        run: |
-          python3 bench/corpus.py --core
-          python3 bench/corpus.py --short
+        run: bench/fetch.sh core,short
       - name: Size and round trip, per file
         run: |
           cargo run --release --manifest-path rust/Cargo.toml --example corpus -- bench/corpus
