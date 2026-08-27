@@ -13,6 +13,12 @@
 //! when a payload compresses to a single block, which is every payload up to
 //! 128 KiB.
 //!
+//! The one thing the segment says that the frame does not is what the payload
+//! decompresses to. A frame would carry it for one to eight bytes, but only at
+//! the price of the five [`strip`] takes off, so the segment carries it in a
+//! length field of its own: [`put_segment`] writes it and the decoder sizes
+//! its output buffer from it instead of guessing. Section 10.1.
+//!
 //! Three things here are decisions rather than transcription.
 //!
 //! **How much payload goes in one frame.** The specification leaves it to the
@@ -56,9 +62,10 @@ pub const FRAME_PAYLOAD: usize = 1 << 20;
 /// generous by a factor of forty.
 pub const COMPARE_BELOW: usize = 4096;
 
-/// A conservative ceiling on what one frame may expand to on decode, used
-/// where the frame declares no content size. Specification section 16: the
-/// expansion is attacker-controlled and the ceiling belongs on the total.
+/// A ceiling a caller may hand [`crate::decode_bounded`] where it has no better
+/// one of its own. Specification section 16: a segment declares what it
+/// expands to, but a declaration is not a bound -- the bound is the caller's,
+/// and it belongs on the total across all segments rather than on each one.
 pub const DEFAULT_EXPANSION_LIMIT: usize = 1 << 30;
 
 thread_local! {
@@ -107,9 +114,12 @@ thread_local! {
 ///   zstd frame format, not a modification of one -- a decoder reads it by
 ///   setting the same flag.
 /// * **The content size.** One to eight bytes saying how large the payload
-///   decompresses to. A decoder must bound that from the caller's ceiling
-///   anyway (Section 16), so the field buys an allocation hint and costs
-///   bytes on every frame.
+///   decompresses to -- which the segment now says instead, in a field that is
+///   one character where this one is one to eight bytes, and that class 20 can
+///   keep. Setting zstd's flag would put a bit in the descriptor byte that
+///   [`strip`] needs to be zero, so the two are not even alternatives: taking
+///   the field costs the five stripped bytes on every single-block payload.
+///   Section 10.1.
 /// * **The checksum.** The format makes no integrity claim (Section 2.3), and
 ///   a four-byte XXH64 tail on every frame is not the place to start making
 ///   one. Off by default in zstd; set here so that it stays off if that ever
@@ -188,12 +198,19 @@ pub(crate) fn unstrip(block: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(block);
 }
 
-/// Write one compressed segment: the signal, the length and the payload.
-fn put_segment(class: u16, payload: &[u8], out: &mut Vec<u8>) {
+/// Write one compressed segment: the signal, the two lengths and the payload.
+fn put_segment(class: u16, payload: &[u8], plain: usize, out: &mut Vec<u8>) {
     // The signal, with an empty flush field: block mode is at a group
     // boundary before the first segment and after every one.
     crate::symbols::put_pair(SIGNAL_MIN + 2 * class, out);
     put_length(payload.len(), out);
+    // What the payload decompresses to. The frame does not say -- `lean` turns
+    // the content-size field off, and class 20 could not keep it anyway, since
+    // the field would put a bit in the descriptor byte that `strip` needs to
+    // be zero. So the segment says it instead, in the same tiered field as the
+    // payload length: one character below ninety bytes, three below 8 370,
+    // seven above. Section 10.1.
+    put_length(plain, out);
     // A payload pads its last symbol with zero bits rather than emitting a
     // short final group: specification section 9, and the decoder computes the
     // character count from the length field before reading any of them.
@@ -204,9 +221,14 @@ fn put_segment(class: u16, payload: &[u8], out: &mut Vec<u8>) {
     acc.finish_padded(out);
 }
 
-/// Characters one compressed segment occupies, given its payload length.
-fn segment_chars(payload: usize) -> usize {
-    2 + length_chars(payload) + 2 * (8 * payload).div_ceil(13)
+/// Characters one compressed segment occupies, given both its lengths.
+///
+/// The plain-length field is in here and not only in [`put_segment`] on
+/// purpose: [`zstd_chars`] feeds this to the comparison of section 11.2, so
+/// the encoder stops choosing a compressed segment exactly where the field
+/// stops paying for itself rather than emitting one that lost.
+fn segment_chars(payload: usize, plain: usize) -> usize {
+    2 + length_chars(payload) + length_chars(plain) + 2 * (8 * payload).div_ceil(13)
 }
 
 fn with_compressor<T>(
@@ -263,8 +285,8 @@ pub fn encode_zstd(data: &[u8], level: i32) -> std::io::Result<String> {
             debug_assert_eq!(n, frame.len());
 
             match strip(&frame) {
-                Some(block) => put_segment(CLASS_ZBLK, block, &mut out),
-                None => put_segment(CLASS_ZSTD, &frame, &mut out),
+                Some(block) => put_segment(CLASS_ZBLK, block, chunk.len(), &mut out),
+                None => put_segment(CLASS_ZSTD, &frame, chunk.len(), &mut out),
             }
             Ok(())
         })?;
@@ -324,7 +346,7 @@ pub fn zstd_chars(data: &[u8], level: i32) -> std::io::Result<usize> {
             with_compressor(level, |c| c.compress_to_buffer(chunk, &mut *frame))?;
             Ok(strip(&frame).map_or(frame.len(), <[u8]>::len))
         })?;
-        chars += segment_chars(n);
+        chars += segment_chars(n, chunk.len());
     }
     Ok(chars)
 }

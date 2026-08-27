@@ -33,6 +33,34 @@ fits in one, which is everything up to 128 KiB. It is worth nothing on a
 megabyte and 11 % of the encoding on a protocol field, and it halves the length
 at which compression starts to pay. Specification Sections 10.1, 10.2 and 17.20.
 
+A compressed segment says what it decompresses to, in a second length field
+after the payload's. The frame does not say: `lean` turns zstd's content-size
+field off, and class 20 could not keep it in any case, because the field puts a
+bit in the descriptor byte that the stripped form needs to be zero. Without it
+a decoder guessed — four to one — and paid for the guess twice, reallocating and
+copying part-way through every text payload and holding four times the buffer it
+needed on every payload that barely compressed. The field is the tiered one of
+Section 7.3, so it costs one character below ninety bytes, three below 8 370
+and seven above: 0.0037 % over the corpus, and one single character over the
+whole short corpus. It buys 1.04× to 1.27× on decode, an allocation that is
+right the first time, and a zip bomb refused by reading a field rather than by
+expanding a megabyte and throwing it away. The declaration is checked against
+what the frame actually produced, and the reserve it asks for is capped by what
+a payload that size could physically produce, so a segment that lies gets an
+allocation proportional to itself and then an error. Specification Sections
+10.1, 10.2, 16 and 17.23.
+
+The decoder keeps its zstd context and decompresses straight into the caller's
+buffer. `zstd::stream::read::Decoder::new` builds a `ZSTD_DCtx` and the
+streaming buffers around it per call, and on a field-sized payload that setup
+was the entire cost — 14.7 µs to decompress a sixty-nine-byte frame that takes
+129 ns once the context is kept; the encoder had held a compressor per thread
+since the class existed and the decoder had nothing. The plaintext also used to
+land in a scratch vector and be copied out of it, which on a quarter-megabyte
+frame cost two thirds of what the decompression did. Together, on the samples
+that carry a compressed segment: 1.3× to 1.7× at a quarter of a megabyte and
+above, 4.8× to 5.1× at four kilobytes.
+
 Measured head to head against Base85N 0.5.1, each codec as it ships — this one
 with its compressor, which is part of the format, and Base85N without one,
 because it has none. Both built from source and run in one process under one

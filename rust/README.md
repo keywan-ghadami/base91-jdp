@@ -257,6 +257,17 @@ content-size field and the block header's size field say what the length field
 said, and the checksum answers a question this format does not ask. Eleven
 bytes come off before anything about the compression changes.
 
+The content-size field is the one whose job the segment then has to do itself.
+A decoder that does not know what a payload expands to has to guess the size of
+its output buffer, and a guess is wrong twice — too low and the buffer is
+reallocated and copied part-way through the frame, too high and the difference
+is held for nothing. So the segment carries a second length field saying what
+the payload decompresses to: one character under ninety bytes, three under
+8 370, seven above, against one to eight bytes for zstd's field and the five
+stripped ones it would cost. Over the corpus that is 0.0037 % of the output for
+1.04× to 1.27× on decode, and for a zip bomb refused by reading a field rather
+than by expanding a megabyte and discarding it.
+
 `compress::lean` takes the first six — magicless frame format, no content size,
 no checksum, no dictionary id, all of them ordinary zstd settings.
 `compress::strip` takes the last five, on any payload that came out as a single

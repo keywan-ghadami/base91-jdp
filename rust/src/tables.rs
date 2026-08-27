@@ -132,6 +132,20 @@ pub const MAX_FRAME_BYTES: usize = 16_777_216;
 /// Bound on one `ZBLK` payload: a zstd block cannot exceed 128 KiB, and a
 /// payload that claims to is not one. Specification section 10.2.
 pub const MAX_BLOCK_BYTES: usize = 128 * 1024;
+
+/// Bound on what one compressed segment may declare it decompresses to.
+/// Specification section 10.1: the plain-length field is a bound a decoder
+/// allocates against, so it needs one of its own.
+pub const MAX_FRAME_PLAIN_BYTES: usize = 1 << 26;
+
+/// The most one byte of a `ZSTD` payload can decompress to, as a structure
+/// rather than as a promise. A block header is three bytes and the smallest
+/// block that expands at all is a run-length block of one byte, so four bytes
+/// of payload produce at most [`MAX_BLOCK_BYTES`]. Section 10.1 uses it to
+/// bound the allocation a declared length may ask for, so that a segment that
+/// lies about its length cannot ask for more than its own size could ever
+/// produce.
+pub const MAX_FRAME_EXPANSION: usize = MAX_BLOCK_BYTES / 4;
 pub const R_LEN: usize = 8;
 
 /// The R-Set, in the index order that fixes the bits of `mask`.
