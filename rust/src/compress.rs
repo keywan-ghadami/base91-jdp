@@ -80,6 +80,21 @@ thread_local! {
     /// by level, because changing the level means a new context anyway.
     static COMPRESSOR: std::cell::RefCell<Option<(i32, zstd::bulk::Compressor<'static>)>> =
         const { std::cell::RefCell::new(None) };
+
+    /// One decompression context per thread, kept between calls.
+    ///
+    /// The mirror of `COMPRESSOR`, and the same cost on the other side: a
+    /// `ZSTD_DCtx` and the streaming buffers around it are built per call by
+    /// every one-shot entry point zstd offers, and on a field-sized payload
+    /// that setup *is* the measurement -- a sixty-nine-byte frame took 14.7 us
+    /// to decompress with a context built for it and 129 ns with one kept.
+    /// At a quarter of a megabyte it is still more than half of what the
+    /// decompression costs.
+    ///
+    /// Not keyed by anything: a decompressor has no level, and the one
+    /// parameter this crate sets is the same on every frame it reads.
+    static DECOMPRESSOR: std::cell::RefCell<zstd::zstd_safe::DCtx<'static>> =
+        std::cell::RefCell::new(zstd::zstd_safe::DCtx::create());
 }
 
 /// The frame settings, which are the interesting part of Section 10.1.
@@ -207,6 +222,26 @@ fn with_compressor<T>(
             *slot = Some((level, c));
         }
         f(&mut slot.as_mut().unwrap().1)
+    })
+}
+
+/// Run `f` against this thread's decompression context, reset for a new frame
+/// and set to read the magicless frames [`lean`] writes.
+///
+/// `ZSTD_reset_session_only` leaves the parameters alone and abandons any
+/// stream in progress, so a frame that failed half way through cannot leave
+/// the context poisoned for the next one.
+pub(crate) fn with_decompressor<T>(
+    f: impl FnOnce(&mut zstd::zstd_safe::DCtx<'static>) -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    use zstd::zstd_safe::{DParameter, FrameFormat, ResetDirective};
+    DECOMPRESSOR.with(|cell| {
+        let mut ctx = cell.borrow_mut();
+        ctx.reset(ResetDirective::SessionOnly)
+            .map_err(|_| std::io::Error::other("zstd context reset"))?;
+        ctx.set_parameter(DParameter::Format(FrameFormat::Magicless))
+            .map_err(|_| std::io::Error::other("magicless is not supported"))?;
+        f(&mut ctx)
     })
 }
 

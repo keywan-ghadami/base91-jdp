@@ -470,28 +470,30 @@ impl<'a> Decoder<'a> {
                     // one-megabyte input. Reading through a capped reader
                     // grows the buffer as the frame actually produces bytes.
                     let limit = self.budget.saturating_sub(out.len());
-                    let mut reader = zstd::stream::read::Decoder::new(&frame[..])
-                        .map_err(|_| self.err(Code::MalformedFrame, "not a zstd frame"))?;
+                    let before = out.len();
+                    // Straight into the caller's buffer. The plaintext used to
+                    // land in a scratch `Vec` and be copied out of it, and on a
+                    // quarter-megabyte frame that copy cost two thirds of what
+                    // the decompression did, for nothing -- the ceiling below
+                    // reads just as well off `out`.
+                    out.reserve(frame_reserve(&frame).min(limit).min(RESERVE_CAP));
                     // The frame carries no magic number: the segment signal
-                    // already said what it is. See `compress::lean`.
-                    reader
-                        .set_parameter(zstd::zstd_safe::DParameter::Format(
-                            zstd::zstd_safe::FrameFormat::Magicless,
-                        ))
-                        .map_err(|_| self.err(Code::MalformedFrame, "magicless not supported"))?;
-                    let mut plain =
-                        Vec::with_capacity(frame_reserve(&frame).min(limit).min(RESERVE_CAP));
-                    // One byte past the ceiling, so a frame that would exceed
-                    // it is caught rather than truncated silently.
-                    Read::take(&mut reader, limit as u64 + 1)
-                        .read_to_end(&mut plain)
-                        .map_err(|_| {
-                            self.err(Code::MalformedFrame, "the decompressor refused the frame")
-                        })?;
-                    if plain.len() > limit {
+                    // already said what it is. See `compress::lean`, which is
+                    // also where the context comes from -- building one per
+                    // frame is what a decoder pays most of a short payload for.
+                    crate::compress::with_decompressor(|ctx| {
+                        let mut reader = zstd::stream::read::Decoder::with_context(&frame[..], ctx);
+                        // One byte past the ceiling, so a frame that would
+                        // exceed it is caught rather than truncated silently.
+                        Read::take(&mut reader, limit as u64 + 1).read_to_end(out)?;
+                        Ok(())
+                    })
+                    .map_err(|_| {
+                        self.err(Code::MalformedFrame, "the decompressor refused the frame")
+                    })?;
+                    if out.len() - before > limit {
                         return Err(self.err(Code::InvalidLength, "output ceiling exceeded"));
                     }
-                    out.extend_from_slice(&plain);
                 }
             }
             CLASS_PACKED_FIRST..=CLASS_PACKED_LAST => {
