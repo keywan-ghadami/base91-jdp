@@ -4,7 +4,7 @@
 |---|---|
 | Version | 0.4.0 |
 | Status | Draft |
-| Date | 2026-08-25 |
+| Date | 2026-08-27 |
 | License | MPL-2.0 |
 | Supersedes | 0.3.0 |
 
@@ -22,6 +22,16 @@
 > carried that name; the format is the same lineage and the documents under
 > `spec/history/` keep the name they were published under. Nothing about the
 > wire format changed with the rename.
+
+> **Amended while still a draft, 2026-08-27.** A compressed segment now carries
+> a second length field, saying what its payload decompresses to (Section
+> 10.1). It costs one to seven characters a segment -- 0.004 % over the corpus
+> of Section 17.1 -- and it is what lets a decoder size the output buffer once
+> instead of guessing, and refuse a segment that expands past the caller's
+> ceiling before decompressing it rather than after. Section 17.23 measures
+> both sides. This changes the wire format of a draft that has not been
+> released: an earlier build of the prototype reads no stream that contains a
+> compressed segment, and none is expected to exist.
 
 ## 1. Abstract
 
@@ -564,6 +574,60 @@ byte, no dictionary rule and no segment structure of its own. The length field
 of Section 7.3 gives the frame's length in bytes, and everything else is
 zstd's.
 
+**A compressed segment carries two length fields, not one.** The first is the
+payload's, above. The second, immediately after it and in the same tiered
+encoding of Section 7.3, is what that payload decompresses to. Both are
+mandatory on classes 17 and 20 and on no other class.
+
+The second field exists because the frame will not carry the same thing for
+free. zstd has a content-size field, and the table below leaves it out for a
+reason that was sound as far as it went -- a decoder must bound the output from
+the caller's ceiling in any case. But *bounding* an allocation and *sizing* one
+are different jobs. A decoder that knows only a ceiling has to guess the size,
+and a guess is wrong twice: too low and the output buffer is reallocated and
+copied part-way through the frame, too high and the difference is held for
+nothing. Section 17.23 measures a decoder guessing four to one -- a reallocation
+on every text payload, and four times the necessary memory on every payload that
+barely compresses.
+
+Nor could class 20 use zstd's field even if it wanted to. Setting the
+content-size flag puts a bit in the frame header descriptor, and Section 10.2
+strips that descriptor precisely because every bit in it is zero. The field
+would cost the five bytes of the stripped header on every single-block payload
+to save an allocation on the large ones. A field in the segment costs one
+character where the payload is under ninety bytes, three under 8 370 and seven
+above -- so it is nearly free exactly where zstd's field is expensive, and
+exactly where the allocation is worth sizing it is seven characters against
+tens of thousands.
+
+**The second field is a claim, and a decoder MUST verify it.** It is
+attacker-controlled like every other length here, and it is the one length that
+names an allocation rather than an extent of input. So:
+
+* A decoder MUST reject a declared length above `MAX_FRAME_PLAIN_BYTES` with
+  `INVALID_LENGTH`.
+* A decoder MUST reject a declared length above the caller's remaining ceiling
+  with `INVALID_LENGTH`, **before decompressing**. This is the whole practical
+  value of the field on the security side: the amplification of Section 16 is
+  refused by reading a field rather than by expanding a megabyte and discarding
+  it.
+* A decoder MUST NOT allocate the declared length merely because it was
+  declared. It MUST cap what it reserves by what a payload of this size could
+  physically produce: `MAX_BLOCK_BYTES` for class 20, which is one block, and
+  `L × MAX_FRAME_EXPANSION` for class 17, where `L` is the payload length. A
+  segment that lies upward therefore gets an allocation proportional to its own
+  length, and then an error.
+* A decoder MUST compare the bytes the frame actually produced against the
+  declared length and reject a mismatch, in either direction, with
+  `INVALID_LENGTH`.
+
+The cap is a structure and not a promise: a block header is three bytes and the
+smallest block that expands at all is a run-length block of one byte, so four
+bytes of payload produce at most one block, and a block is at most
+`MAX_BLOCK_BYTES`. It is loose by design. Honest data never comes near it, so
+an honest segment is allocated exactly once at exactly the right size, which is
+the point.
+
 **A conforming frame is a plain zstd frame, and an encoder SHOULD emit the
 smallest one.** A zstd frame has four optional parts that a segment either
 already carries or that this format does not use, and RFC 8878 lets a
@@ -572,7 +636,7 @@ compressor leave all four out:
 | Part | Bytes | Why it need not be there |
 |---|---|---|
 | magic number | 4 | The signal already named the class. The *magicless* frame format of RFC 8878 Section 3.1.1.1 omits it, and a decoder reads such a frame by selecting the same format. |
-| content size | 1 … 8 | A decoder MUST bound the decompressed size from the caller's ceiling in any case, so the field buys an allocation hint at a cost paid on every frame. |
+| content size | 1 … 8 | The segment's second length field carries this, above, and carries it where class 20 can keep it. Setting zstd's flag instead would put a bit in the descriptor byte that Section 10.2 needs to be zero. |
 | content checksum | 4 | Section 2.3: this format makes no integrity claim, and a per-frame checksum is not where one would start. |
 | dictionary id | 1 … 4 | Dictionaries are out of scope, below. |
 
@@ -603,9 +667,12 @@ self-describing. An encoder MUST NOT emit such a frame.
 
 **A decoder MUST bound what it allocates.** A compressor expands, and the
 expansion is attacker-controlled. `MAX_FRAME_BYTES` bounds the compressed
-length; the decompressed length must be bounded independently, from the frame's
-content-size field where present and by a caller-supplied ceiling where not,
-and that ceiling belongs on the total across all segments, not on each one.
+length; the decompressed length is bounded by the second length field, by the
+structural cap above, and by a caller-supplied ceiling, and that ceiling belongs
+on the total across all segments, not on each one. The second field makes the
+bound cheap to apply but does not replace the ceiling: a stream of honest
+segments, each declaring an honest length, still sums to whatever the encoder
+chose.
 
 ### 10.2 A compressed payload without its header
 
@@ -628,9 +695,17 @@ field in them:
 
 A decoder reading class 20 therefore **reconstructs those five bytes** — `0x00`,
 `0x38`, then a three-byte little-endian block header of
-`1 | (2 << 1) | (L << 3)` where `L` is the length field — prepends them to the
-payload, and decodes the result as a magicless frame. Nothing else about class
-20 differs from class 17.
+`1 | (2 << 1) | (L << 3)` where `L` is the payload length field — prepends them
+to the payload, and decodes the result as a magicless frame. Nothing else about
+class 20 differs from class 17: it carries the same two length fields in the
+same order, and the decoder verifies the second one the same way. Its
+structural cap is tighter, because one block decompresses to at most
+`MAX_BLOCK_BYTES` whatever the segment declares.
+
+The first row of that table is also why the second length field is in the
+segment rather than in the frame: zstd's content-size field sets a bit in the
+descriptor, and a descriptor that is not zero is a frame this class cannot
+carry. Section 10.1 has the argument.
 
 **Class 20 is bounded at one block.** `MAX_BLOCK_BYTES` is 128 KiB, which is
 the largest block RFC 8878 allows. A decoder MUST reject a class 20 length
@@ -738,8 +813,11 @@ empty flush field; one that costs a character moves both by four to eight bytes.
 
 `ZSTD` and `ZBLK` are not part of the scan. An encoder that has been asked to
 compress builds the whole-input candidate — one or more compressed segments per
-Sections 10.1 and 10.2 — computes its character count, and takes it only if it
-beats what the scan and block mode produce together. Which of the two classes
+Sections 10.1 and 10.2 — computes its character count, **both length fields
+included**, and takes it only if it beats what the scan and block mode produce
+together. Counting the second field here is what keeps it honest: an encoder
+that omitted it from the comparison and paid it in the output would emit a
+compressed segment that had lost. Which of the two classes
 carries a given piece is not a choice: Section 10.2 applies where the piece came
 out as one compressed block and Section 10.1 where it did not.
 
@@ -789,6 +867,8 @@ Section 15 treats as conforming.
 | `MAX_SEGMENT_BYTES` | 65 536 | Bound on every class but `ZSTD` and `ZBLK`; makes output canonical and encoder memory finite |
 | `MAX_FRAME_BYTES` | 16 777 216 | Bound on one `ZSTD` payload (Section 10.1) |
 | `MAX_BLOCK_BYTES` | 131 072 | Bound on one `ZBLK` payload; the largest block RFC 8878 allows (Section 10.2) |
+| `MAX_FRAME_PLAIN_BYTES` | 67 108 864 | Bound on what one compressed segment may declare it decompresses to (Section 10.1) |
+| `MAX_FRAME_EXPANSION` | 32 768 | `MAX_BLOCK_BYTES / 4`: the most one byte of a `ZSTD` payload can produce, as a structure rather than a promise (Section 10.1) |
 | `NUM_PROFILES` | 4 | Donor profiles (Section 17.5) |
 | `R_LEN` | 8 | R-Set size, and the width of `mask` |
 | `PARALLEL_ALIGN` | 13 | Bytes per whole symbol group; a block-mode split here needs no seam (Section 14.5) |
@@ -924,7 +1004,17 @@ if L == 0:  error INVALID_LENGTH
 if class == 17:  if L > MAX_FRAME_BYTES:    error INVALID_LENGTH
 elif class == 20: if L > MAX_BLOCK_BYTES:   error INVALID_LENGTH
 else:            if L > MAX_SEGMENT_BYTES:  error INVALID_LENGTH
+
+if class == 17 or class == 20:              # Section 10.1
+    read a second length field per Section 7.3  -> P
+    if P == 0 or P > MAX_FRAME_PLAIN_BYTES:     error INVALID_LENGTH
+    if P > ceiling - already_emitted:           error INVALID_LENGTH
+    room = MAX_BLOCK_BYTES if class == 20 else L × MAX_FRAME_EXPANSION
+    reserve min(P, room)                        # a cap, not a promise
 ```
+
+For classes 17 and 20 the payload is then decompressed, and the bytes it
+produced are compared against `P`: anything but equality is `INVALID_LENGTH`.
 
 Then the payload: Section 8.4 for classes 0–6, Section 9 for 7–16, Section 10.1
 for 17, Section 10.3 for 18 and 19, and Section 10.2 for 20. Block mode resumes
@@ -1073,6 +1163,11 @@ walked once — can decode the pieces independently, and that is the only case.
   seven R-Set members.
 * Mixed content exercising every block↔segment transition, with the pending bit
   count `n` taking each of its thirteen values at a transition.
+* A compressed segment whose declared decompressed length has been altered, in
+  either direction, which MUST be rejected with `INVALID_LENGTH` rather than
+  decoded to whatever the frame happened to produce; and a segment declaring
+  more than the caller's ceiling, which MUST be rejected without the frame
+  being decompressed at all.
 * Every length tier of Section 7.3, at its boundaries: 89/90, 8 369/8 370.
 
 ### 15.3 Canonicity
@@ -1120,6 +1215,16 @@ integrity claim (Section 2.3). The decoder is the security-relevant surface.
   input; the output must be bounded by the caller. A stream of many small
   `ZSTD` or `ZBLK` segments can multiply a modest input into an arbitrary one,
   so the ceiling belongs on the total, not per segment.
+* **The declared decompressed length is itself attacker-controlled.** It is
+  read before the payload, so the ceiling is enforced without decompressing
+  anything -- which is the cheap way to refuse an amplifier and the reason the
+  field earns its characters here rather than only on the allocation side. But
+  a decoder that *allocated* the declared length would have replaced one
+  amplifier with a better one: twenty characters asking for a gigabyte. The
+  reserve is capped by what the payload could physically produce (Section
+  10.1), and the produced length is compared against the declaration
+  afterwards. Neither check is optional and neither substitutes for the
+  other.
 * **A `ZBLK` payload is a block the decoder wraps a header around.** The header
   is written from the length field and constants, so it is never adversarial,
   but the block behind it is: a decoder MUST treat a reconstruction that fails
@@ -2027,6 +2132,53 @@ forbids:
 
 `rust/examples/scanframe.rs`. The gain is entirely at the negative levels and
 it does not close the gap to the pipeline even there — 0.50808 against 0.50479.
+
+### 17.23 What the second length field costs, and what it buys
+
+The field of Section 10.1, over the corpus of Section 17.1. Twenty-one of the
+88 samples emit a compressed segment at the default level; the rest carry no
+compressed segment and are unchanged in both columns.
+
+**Size.** One character below ninety bytes of plaintext, three below 8 370,
+seven above — which is the tiered field of Section 7.3 doing exactly what it is
+for.
+
+| | characters, before | after | delta |
+|---|---|---|---|
+| whole corpus, 88 samples | 3 792 139 | 3 792 278 | **+0.0037 %** |
+| the 21 with a compressed segment | 2 810 067 | 2 810 206 | +0.0049 % |
+| the short corpus, 59 samples under 200 bytes | 2 472 | 2 473 | +0.0405 % |
+
+The entire cost on the short corpus is one character, on the one field-sized
+sample whose payload compresses at all — 3.4 % of that sample's 29-character
+encoding, and the only place in the corpus where the field is visible at all.
+Section 11.2's comparison counts it, so where it would tip the balance the
+encoder stops compressing rather than paying it.
+
+**Decode.** Against a decoder that guesses four to one and reallocates when
+the guess is short, which is what this section replaced:
+
+| sample | bytes | decode |
+|---|---|---|
+| `text_clean-262144.bin` | 262 144 | **1.27×** |
+| `requests-2.32.3.tar` | 655 360 | 1.23× |
+| `commonmark-spec.txt` | 202 827 | 1.22× |
+| `text_sparse-262144.bin` | 262 144 | 1.21× |
+| `countries.min.json` | 772 294 | 1.17× |
+| `text_clean-4096.bin` | 4 096 | 1.14× |
+| `DejaVuSans.ttf` | 756 072 | 1.10× |
+| `countries.json` | 1 408 911 | 1.04× |
+| `06-dec-digit-run-64` | 64 | 0.95× |
+
+Best of three runs per sample, medians within a run, on one machine; the last
+row is a sample whose whole decode is four hundred nanoseconds and is noise.
+
+**Memory.** Not in the table because it is not a measurement: a guess of four
+to one holds four times the necessary buffer for a payload that barely
+compresses, and the declared length holds exactly what the payload produces.
+The reallocation the guess forces on text is the same fact seen from the other
+side.
+
 
 **Not taken.** A compressed segment's payload is block-packed bytes, and
 carrying it as an arbitrary encoded stream instead would make it recursive: the

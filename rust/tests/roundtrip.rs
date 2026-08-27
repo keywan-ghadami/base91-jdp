@@ -415,12 +415,54 @@ mod compressed {
         let bomb = encode_zstd(&vec![0u8; 1 << 20], 19).unwrap();
         assert!(bomb.len() < 400, "{} characters", bomb.len());
         assert_eq!(decode(&bomb).unwrap().len(), 1 << 20);
+        // The segment declares what it expands to, so the ceiling is reached
+        // by reading a field rather than by decompressing a megabyte and
+        // throwing it away. The code pins that: `MalformedFrame` here would
+        // mean the frame was expanded first.
         match decode_bounded(&bomb, 4096) {
             Ok(v) => panic!("decoded {} bytes past the ceiling", v.len()),
-            Err(e) => assert!(
-                matches!(e.code, Code::InvalidLength | Code::MalformedFrame),
-                "{e}"
-            ),
+            Err(e) => assert_eq!(e.code, Code::InvalidLength, "{e}"),
         }
+    }
+
+    /// The declared length is a claim, and a decoder that allocates against a
+    /// claim has to check it. Every single-character change to the field is
+    /// refused -- not by the decompressor, which is perfectly happy, but by
+    /// the comparison against what actually came out.
+    #[test]
+    fn a_wrong_declared_length_is_refused() {
+        let data: Vec<u8> = b"the quick brown fox jumps over the lazy dog. "
+            .iter()
+            .cycle()
+            .take(4000)
+            .copied()
+            .collect();
+        let text = encode_zstd(&data, 3).unwrap();
+        assert_eq!(decode(&text).unwrap(), data);
+
+        // Segment layout: two characters of signal, the payload length -- one
+        // character, the frame being well under ninety bytes -- and then the
+        // plain length, which at 4 000 is the three-character tier: a marker
+        // and a pair. Asserted rather than assumed, so that a layout change
+        // fails here loudly instead of quietly testing nothing.
+        let chars: Vec<char> = text.chars().collect();
+        assert_eq!(chars[3], '-', "not the three-character length tier: {text}");
+
+        let mut caught = 0;
+        for i in [4usize, 5] {
+            for c in ['A', 'B', 'z', '0'] {
+                if chars[i] == c {
+                    continue;
+                }
+                let mut bad = chars.clone();
+                bad[i] = c;
+                let s: String = bad.into_iter().collect();
+                let e = decode(&s).expect_err("a wrong declared length decoded");
+                if e.what == "not the declared length" {
+                    caught += 1;
+                }
+            }
+        }
+        assert!(caught > 0, "no mutation reached the length check");
     }
 }

@@ -17,7 +17,7 @@ use crate::tables::*;
 use std::io::Read;
 
 /// The most a decoder reserves up front for a frame's plaintext. Past this the
-/// buffer grows as bytes actually arrive.
+/// buffer grows as bytes actually arrive, however much the segment declared.
 #[cfg(feature = "zstd")]
 const RESERVE_CAP: usize = 1 << 26;
 
@@ -40,16 +40,6 @@ fn class_name(class: u16) -> &'static str {
         }
         _ => "?",
     }
-}
-
-/// What to reserve for a frame's plaintext. A frame declares its content size
-/// only when an encoder pays for the field, and this one does not (see
-/// `compress::lean`), so the guess comes from the frame itself: four to one is
-/// a little under what the corpus averages, which is what a reserve wants. A
-/// hint for the allocation, never a bound -- the bound is the caller's.
-#[cfg(feature = "zstd")]
-fn frame_reserve(frame: &[u8]) -> usize {
-    frame.len().saturating_mul(4)
 }
 
 pub struct Decoder<'a> {
@@ -442,6 +432,16 @@ impl<'a> Decoder<'a> {
                 #[cfg(feature = "zstd")]
                 {
                     let l = self.bounded_length(crate::tables::MAX_FRAME_BYTES)?;
+                    // What the payload decompresses to, declared by the
+                    // segment because the frame does not carry it (section
+                    // 10.1). Read before the payload, so a segment claiming
+                    // more than the caller's ceiling is refused here rather
+                    // than after a decompression whose result is thrown away.
+                    let plain = self.bounded_length(crate::tables::MAX_FRAME_PLAIN_BYTES)?;
+                    let limit = self.budget.saturating_sub(out.len());
+                    if plain > limit {
+                        return Err(self.err(Code::InvalidLength, "output ceiling exceeded"));
+                    }
                     // The payload is read as bytes through the block coder and
                     // then handed to zstd. Nothing about it is this format's
                     // business -- not its length, which the field above gave,
@@ -461,38 +461,43 @@ impl<'a> Decoder<'a> {
                     } else {
                         self.read_packed_bytes(l, &mut frame)?;
                     }
-                    // Section 16: the expansion is attacker-controlled, so the
-                    // ceiling has to bound what is *allocated* and not only
-                    // what is kept. Handing the remaining budget to a one-shot
-                    // decompressor asks it to reserve that much up front --
-                    // with the default budget that is an exabyte, and the
-                    // first version of this line aborted the process on a
-                    // one-megabyte input. Reading through a capped reader
-                    // grows the buffer as the frame actually produces bytes.
-                    let limit = self.budget.saturating_sub(out.len());
+                    // Section 16: the expansion is attacker-controlled, so what
+                    // is *allocated* has to be bounded and not only what is
+                    // kept. The declared length is the allocation this wants,
+                    // but a declaration is not evidence -- so it is capped by
+                    // what a payload of this size could physically produce,
+                    // and checked against what actually came out. A segment
+                    // that lies gets an allocation proportional to its own
+                    // length and then an error, either way.
+                    let room = if class == CLASS_ZBLK {
+                        crate::tables::MAX_BLOCK_BYTES
+                    } else {
+                        l.saturating_mul(crate::tables::MAX_FRAME_EXPANSION)
+                    };
                     let before = out.len();
                     // Straight into the caller's buffer. The plaintext used to
                     // land in a scratch `Vec` and be copied out of it, and on a
                     // quarter-megabyte frame that copy cost two thirds of what
-                    // the decompression did, for nothing -- the ceiling below
+                    // the decompression did, for nothing -- the check below
                     // reads just as well off `out`.
-                    out.reserve(frame_reserve(&frame).min(limit).min(RESERVE_CAP));
+                    out.reserve(plain.min(room).min(RESERVE_CAP));
                     // The frame carries no magic number: the segment signal
                     // already said what it is. See `compress::lean`, which is
                     // also where the context comes from -- building one per
                     // frame is what a decoder pays most of a short payload for.
                     crate::compress::with_decompressor(|ctx| {
                         let mut reader = zstd::stream::read::Decoder::with_context(&frame[..], ctx);
-                        // One byte past the ceiling, so a frame that would
-                        // exceed it is caught rather than truncated silently.
-                        Read::take(&mut reader, limit as u64 + 1).read_to_end(out)?;
+                        // One byte past what was declared, so a frame that
+                        // produces more is caught rather than truncated
+                        // silently.
+                        Read::take(&mut reader, plain as u64 + 1).read_to_end(out)?;
                         Ok(())
                     })
                     .map_err(|_| {
                         self.err(Code::MalformedFrame, "the decompressor refused the frame")
                     })?;
-                    if out.len() - before > limit {
-                        return Err(self.err(Code::InvalidLength, "output ceiling exceeded"));
+                    if out.len() - before != plain {
+                        return Err(self.err(Code::InvalidLength, "not the declared length"));
                     }
                 }
             }
