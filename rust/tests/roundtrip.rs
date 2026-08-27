@@ -378,6 +378,36 @@ mod compressed {
         assert_eq!(decode(&text).unwrap(), big);
     }
 
+    /// The decompression context is kept per thread rather than built per
+    /// frame, so a frame that fails part way through must not leave anything
+    /// behind for the next one. Alternate a refused frame with a good one and
+    /// insist the good one is unaffected -- including the case that abandons a
+    /// stream mid-way rather than at its first byte, which is the ceiling.
+    #[test]
+    fn a_refused_frame_does_not_poison_the_next_decode() {
+        let data: Vec<u8> = b"the quick brown fox jumps over the lazy dog. "
+            .iter()
+            .cycle()
+            .take(9000)
+            .copied()
+            .collect();
+        let good = encode_zstd(&data, 3).unwrap();
+        let bomb = encode_zstd(&vec![0u8; 1 << 20], 19).unwrap();
+
+        let mut truncated = good.clone();
+        truncated.truncate(good.len() - 8);
+
+        for round in 0..8 {
+            assert_eq!(decode(&good).unwrap(), data, "round {round}, before");
+            // Abandoned at the ceiling, with the stream part way through.
+            assert!(decode_bounded(&bomb, 4096).is_err(), "round {round}, bomb");
+            assert_eq!(decode(&good).unwrap(), data, "round {round}, after the bomb");
+            // Abandoned because the frame ran out of input.
+            assert!(decode(&truncated).is_err(), "round {round}, truncated");
+            assert_eq!(decode(&good).unwrap(), data, "round {round}, after the truncation");
+        }
+    }
+
     #[test]
     fn expansion_is_bounded_by_the_caller() {
         // A megabyte of zeros is a few hundred characters. A decoder that
