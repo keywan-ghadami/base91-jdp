@@ -23,6 +23,11 @@ on:
 
 permissions:
   contents: read
+  # The report is posted onto the pull request, in one comment that is
+  # updated rather than added to. A fork's token stays read-only whatever
+  # is asked for here, and the job carries on without the comment.
+  pull-requests: write
+
 
 concurrency:
   group: bench-${{ github.ref }}
@@ -46,14 +51,20 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
-      - name: The other codecs
+      - name: Check out base85n
         uses: actions/checkout@v4
-        with: { repository: keywan-ghadami/base85n, path: base85n }
-      - uses: actions/checkout@v4
-        with: { repository: keywan-ghadami/base94max, path: base94max }
+        with:
+          repository: keywan-ghadami/base85n
+          path: base85n
+
+      - name: Check out base94max
+        uses: actions/checkout@v4
+        with:
+          repository: keywan-ghadami/base94max
+          path: base94max
 
       - name: The benchmark
-        uses: keywan-ghadami/binary2textbench@claude/main
+        uses: keywan-ghadami/binary2textbench@main
         with:
           codec-name: base91z
           codec-path: ${{ github.workspace }}/head
@@ -64,7 +75,8 @@ jobs:
           rounds: ${{ inputs.rounds || '7' }}
           title: Base91z on this pull request
 
-      - uses: actions/upload-artifact@v4
+      - name: Keep the results and the page
+        uses: actions/upload-artifact@v4
         with:
           name: benchmark
           path: b2t-site/
