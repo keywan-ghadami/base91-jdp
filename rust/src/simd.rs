@@ -16,12 +16,12 @@
 //! * [`run_end`] -- how far a run of one repeated byte reaches. The run
 //!   classes of specification section 10.3 are the measured win of 0.4.0, and
 //!   finding a run is a comparison against a splat.
-//! [`dead_span`] is the one that pays, and it pays where it matters most: a
-//! compressed payload has no runs, no packed alphabet and no passthrough, so
-//! the scan of specification section 11.1 is entered once per byte and finds
-//! nothing once per byte. Measured on high-entropy input, the block coder
-//! alone runs at 323 MB/s and the whole encoder at 31 -- five sixths of the
-//! time is a scan that fails.
+//! * [`dead_span`] -- the one that pays, and it pays where it matters
+//!   most: a compressed payload has no runs, no packed alphabet and no
+//!   passthrough, so the scan of specification section 11.1 is entered once
+//!   per byte and finds nothing once per byte. Measured on high-entropy
+//!   input, the block coder alone runs at 323 MB/s and the whole encoder at
+//!   31 -- five sixths of the time is a scan that fails.
 //!
 //! [`SkipSet`] is the same idea applied to the *passthrough* prefix scan, and
 //! it is **not wired in, because it was measured and it loses.** Four
@@ -226,7 +226,7 @@ pub const MARGIN: usize = 10;
 
 #[inline]
 pub fn candidate_mask(data: &[u8], at: usize) -> u32 {
-    debug_assert!(at + LANES + 1 <= data.len());
+    debug_assert!(at + LANES < data.len());
     let chunk = V::from_slice(&data[at..at + LANES]);
     let next = V::from_slice(&data[at + 1..at + 1 + LANES]);
 
@@ -342,7 +342,12 @@ pub fn extract_group(bytes: &[u8]) -> [u32; 8] {
     let lo = src.swizzle_dyn(u8x16::from_array(LO));
     let hi = src.swizzle_dyn(u8x16::from_array(HI));
 
+    // SAFETY: `u8x16` and `u32x4` are both sixteen bytes with the same
+    // alignment, and every bit pattern of either is a valid value of the
+    // other. This is a reinterpretation of lanes, which is what the swizzle
+    // above was arranged to produce.
     let lo: u32x4 = unsafe { std::mem::transmute(lo) };
+    // SAFETY: as above.
     let hi: u32x4 = unsafe { std::mem::transmute(hi) };
     let mask = u32x4::splat(8191);
     let a = (lo >> u32x4::from_array([19, 14, 17, 12])) & mask;

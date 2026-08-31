@@ -1,0 +1,63 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# cargo-deny: what this crate will accept in its dependency graph, checked in
+# CI. Run it with `cargo deny check` from `rust/`.
+#
+# The graph is deliberately small -- one optional dependency, and `rand` only
+# for tests -- so these rules are cheap to keep strict. Every relaxation here
+# is a named crate with a reason beside it, never a blanket allowance.
+
+[graph]
+# `simd` is nightly-only and adds no dependency; `zstd` is the only feature
+# that changes the graph, and it is on by default.
+all-features = true
+
+[advisories]
+version = 2
+# A yanked version is not necessarily vulnerable, but it is not a version to
+# ship either, and the lockfile is committed so this is actionable.
+yanked = "deny"
+unmaintained = "all"
+
+[licenses]
+version = 2
+# Permissive, plus this crate's own MPL-2.0. Nothing copyleft-by-linking is
+# allowed in: a caller who links Base91z should not have to read a licence
+# they did not choose.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+# The list above is what this crate will accept, not a description of what it
+# currently pulls in: an allowance nothing uses yet is the point, not a
+# finding.
+unused-allowed-license = "allow"
+
+# `r-efi` is triple-licensed LGPL-2.1-or-later OR MIT OR Apache-2.0. It is a
+# UEFI-target dependency of `getrandom` and is not built for any target this
+# crate is tested on; the MIT arm is what applies where it is.
+[[licenses.exceptions]]
+name = "r-efi"
+allow = ["MIT"]
+
+[bans]
+# Two versions of the same crate is a supply-chain smell in a graph this
+# small, but it is the transitive graph's business to fix, so it warns.
+multiple-versions = "warn"
+# A wildcard version accepts whatever is published next, which is the whole
+# problem with a dependency confusion attack.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

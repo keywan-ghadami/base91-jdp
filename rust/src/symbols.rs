@@ -194,6 +194,11 @@ pub fn block_bulk(acc: &mut Acc, out: &mut Vec<u8>, data: &[u8]) {
             let g = u128::from_be_bytes(data[i..i + 16].try_into().unwrap());
             for k in 0..8u32 {
                 let v = ((g >> (115 - 13 * k)) & 8191) as usize;
+                // SAFETY: `dst` starts at `out.len()` and rises by two per
+                // write, sixteen per group, over the `16 * groups` bytes
+                // reserved above; `base` is that reservation and nothing
+                // reallocates inside the loop. The write is unaligned by
+                // declaration, and `u16` has no invalid bit patterns.
                 unsafe {
                     base.add(dst).cast::<u16>().write_unaligned(PAIR_CHARS[v]);
                 }
@@ -201,6 +206,8 @@ pub fn block_bulk(acc: &mut Acc, out: &mut Vec<u8>, data: &[u8]) {
             }
             i += 13;
         }
+        // SAFETY: every byte from the old length up to `dst` was written by
+        // the loop, and `dst` is within the reserved capacity.
         unsafe { out.set_len(dst) };
     }
 

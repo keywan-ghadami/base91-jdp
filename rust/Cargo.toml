@@ -11,6 +11,20 @@ authors = ["Keywan Ghadami"]
 repository = "https://github.com/keywan-ghadami/base91z"
 keywords = ["base91", "base64", "encoding", "binary-to-text", "json"]
 categories = ["encoding", "text-processing"]
+readme = "README.md"
+homepage = "https://keywan-ghadami.github.io/Base91z/"
+documentation = "https://docs.rs/base91z"
+# The fuzz package is its own workspace with a path dependency back on this
+# one, so it cannot build from a published tarball; it is developed here and
+# run from a checkout. `rust/tests/support/` stays in, because the adversarial
+# suite includes it.
+exclude = ["fuzz/"]
+
+# docs.rs builds on nightly, where `simd` would compile -- but the feature is
+# an acceleration that may never change a decision, so documenting it would
+# advertise a difference that does not exist. Default features only.
+[package.metadata.docs.rs]
+all-features = false
 
 [lib]
 name = "base91z"

@@ -19,9 +19,14 @@ jobs:
         run: cargo test --release --manifest-path rust/Cargo.toml
       - name: Test, without it
         run: cargo test --release --manifest-path rust/Cargo.toml --no-default-features
+      # Not `continue-on-error`. It passes clean, and a lint that reports
+      # without failing is a lint nobody reads -- among these is
+      # `undocumented_unsafe_blocks`, denied at the crate root, which is what
+      # keeps a `SAFETY` comment on every unsafe block.
       - name: Warnings are errors
         run: cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
-        continue-on-error: true
+      - name: Warnings are errors without the compressed class too
+        run: cargo clippy --manifest-path rust/Cargo.toml --no-default-features --all-targets -- -D warnings
 
   simd:
     name: The vector paths
@@ -32,6 +37,10 @@ jobs:
       # The feature may only ever make the same decisions faster, so the whole
       # suite runs under it and must agree character for character.
       - run: cargo test --release --manifest-path rust/Cargo.toml --features simd
+      # The vector paths are nightly-only, so nightly clippy is the only thing
+      # that ever lints them. It had drifted: eight findings nobody saw.
+      - run: rustup component add clippy
+      - run: cargo clippy --manifest-path rust/Cargo.toml --features simd --all-targets -- -D warnings
 
   measure:
     name: Sizes on the corpus
@@ -65,3 +74,72 @@ jobs:
         run: |
           python site/build.py --output _site
           python site/check_links.py _site
+      # Regression tests for the generator itself: a link scheme rewritten into
+      # a repository path, a footer naming a repository that had been renamed,
+      # and two index checks that had gone dead and stopped checking anything.
+      # Standard library only.
+      - name: The generator's own checks still check
+        run: python site/test_checks.py
+
+  fuzz:
+    name: The fuzz targets, briefly
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      # A smoke run, not a campaign: thirty seconds a target catches a target
+      # that no longer builds or that fails on the first input, which is what
+      # a push can break. Long runs are a person's job, and what they find
+      # becomes a case in tests/adversarial.rs.
+      - name: Thirty seconds a target
+        working-directory: rust
+        run: |
+          for target in $(cargo fuzz list); do
+            echo "::group::$target"
+            cargo fuzz run "$target" -- -max_total_time=30 -rss_limit_mb=4096
+            echo "::endgroup::"
+          done
+
+  miri:
+    name: Undefined behaviour
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      # The container-only build, because Miri cannot cross an FFI boundary
+      # into zstd's C -- and because every raw pointer in this crate is in the
+      # container: the two bulk paths, and the `set_len` that follows each.
+      #
+      # The adversarial suite rather than the round-trip one. Miri is roughly
+      # four orders of magnitude slower than native, and the round-trip suite
+      # is built on random data at every length: it runs for well over twenty
+      # minutes here and tells us what four seconds of it already did.
+      # `the_bulk_paths_run_on_both_sides` is the case that puts a pointer in
+      # each of the two loops, and it is in this suite for that reason.
+      # `cargo miri test --no-default-features` runs everything, for a person
+      # with the time.
+      - name: Miri over the paths that hold pointers
+        working-directory: rust
+        env:
+          MIRIFLAGS: -Zmiri-symbolic-alignment-check
+        run: cargo miri test --no-default-features --test adversarial
+
+  supply-chain:
+    name: Advisories, licences and sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit cargo-deny --locked
+      # Against the committed lockfile, so what is checked is what is built.
+      - name: RustSec advisories
+        working-directory: rust
+        run: cargo audit
+      - name: Licences, sources and bans
+        working-directory: rust
+        run: cargo deny check
