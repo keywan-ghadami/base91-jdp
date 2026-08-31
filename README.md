@@ -1,11 +1,21 @@
 # Base91z
 
-**basE91 on an alphabet JSON never has to escape, with typed segments and zstd
-inside.**
+**A binary-to-text encoding: arbitrary bytes written as characters, so they can
+travel inside a text protocol. When that protocol is JSON, this is the smallest
+one there is.**
 
+[![Website](https://img.shields.io/badge/website-base91z-1f6feb)](https://keywan-ghadami.github.io/base91z/)
 [![Spec](https://img.shields.io/badge/spec-v0.4.0%20final-green)](spec/base91z-v0.4.0.md)
 [![Implementation](https://img.shields.io/badge/implementation-Rust%20prototype-blue)](rust/README.md)
 [![License](https://img.shields.io/badge/license-MPL--2.0-green)](LICENSE)
+
+Text protocols carry text. An API request, a log line, a config file, a
+database column — put a key, a thumbnail, a certificate or a compressed blob
+into one and the bytes have to be written as characters first. **Base64** is
+how that is almost always done, and it costs a third more size, on every byte,
+forever.
+
+Base91z does the same job and produces less:
 
 ```rust
 let text = base91z::encode(b"{\"user\":\"ada\",\"id\":42,\"role\":\"admin\"}");
@@ -14,8 +24,9 @@ let text = base91z::encode(b"{\"user\":\"ada\",\"id\":42,\"role\":\"admin\"}");
 let text = base91z::encode(&big_json);             // 0.37 characters per byte
 ```
 
-One entry point. It compresses where compression pays and carries the payload
-with a typed class where it does not, and the same `decode` reads either.
+Against Base64's 1.33 characters a byte, on the same files. One entry point: it
+compresses where compression pays and carries the payload with a typed class
+where it does not, and the same `decode` reads either.
 
 Both go into a JSON string verbatim. No escaping, no `\"`, no `\\`, nothing
 that can break the document they sit in — not as a property that was tested for
@@ -26,11 +37,23 @@ string has to escape. **The encoded size is the final size.**
 
 ## What it is
 
+A binary-to-text encoding has one job: turn bytes into characters that a text
+format will carry unharmed, and turn them back. What separates one from another
+is **which characters it is willing to use**, because that decides how many of
+them a byte costs. Base64 uses 64 of them and costs 1.333 characters a byte.
+Printable ASCII holds 94, and an encoding that spends more of them costs less:
+the ones in the table below land around 1.2.
+
+The catch is that the text format reserves some of those characters for itself.
+JSON reserves `"` and `\`, and a string containing either grows: each one is
+written as two. So an encoding that spends those characters is smaller in the
+abstract and not in the file, which is the only place size is spent.
+
 [basE91](http://base91.sourceforge.net/) (Joachim Henke, 2005) is the densest
-widely-implemented binary-to-text encoding that stays in printable ASCII. Its
-91-character alphabet leaves out `\` and `'` — but not `"`, so its output has to
-be escaped inside a JSON string, and the density it gained on paper it gives
-back in the file.
+widely-implemented encoding that stays in printable ASCII. Its 91-character
+alphabet leaves out `\` and `'` — but not `"`, so its output has to be escaped
+inside a JSON string, and the density it gained on paper it gives back in the
+file.
 
 Base91z makes one substitution: **`"` leaves the alphabet and `-` takes its
 place.** That decides everything else. `-` lands on the alphabet's last value,

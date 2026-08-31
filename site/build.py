@@ -57,9 +57,12 @@ GITHUB_BLOB = GITHUB_REPO + "/blob/main/"
 GITHUB_TREE = GITHUB_REPO + "/tree/main/"
 
 SITE_TITLE = "base91z"
+# Shown under the title on every page and as the home page's meta description,
+# so it says what this is to a reader who arrived from a search. Not a repeat
+# of the README's opening line, which sits directly beneath it.
 SITE_TAGLINE = (
-    "basE91 on an alphabet that JSON never has to escape. The encoded size is "
-    "the final size, and a stream says what it carries."
+    "Binary data in text protocols, on an alphabet JSON never has to escape: "
+    "the encoded size is the final size, and a stream says what it carries."
 )
 
 # The current documents are `base91z-vX.Y.Z.md`. Superseded ones under
