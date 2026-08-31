@@ -48,6 +48,24 @@ jobs:
           cargo run --release --manifest-path rust/Cargo.toml --example corpus -- bench/corpus
           cargo run --release --manifest-path rust/Cargo.toml --example short -- bench/corpus/short
 
+  docs:
+    name: Links in the documents
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r site/requirements.txt
+      # Two checks in one: anchors and page links inside the built site, and
+      # every relative Markdown link against the working tree. The second is
+      # what catches a link to a repository file that has been deleted -- the
+      # build rewrites those to github.com, so nothing else would.
+      - name: Build the site and resolve every link
+        run: |
+          python site/build.py --output _site
+          python site/check_links.py _site
+
   superseded:
     name: v0.3.0, kept working
     runs-on: ubuntu-latest

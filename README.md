@@ -70,56 +70,77 @@ Base85N deliberately does not.
 
 Thirteen files, 6.52 MB. Every codec is built from source and run in one
 process under one timing loop, so what is compared is encodings and not
-languages — measured by [binary2textbench](https://github.com/keywan-ghadami/binary2textbench), which does this for six
-encodings. The second column is what the string costs **inside a JSON
-document**, which is where these strings go. Base91z's own figures are
-reproducible here with `cargo run --release --example compresscorpus`.
+languages — measured by
+[binary2textbench](https://github.com/keywan-ghadami/binary2textbench), which
+does this for six encodings and puts the JSON escaping inside the clock.
 
-### No compressor
+Two things to read the tables with. **The second size column is what the string
+costs inside a JSON document**, which is where these strings go. And **speed is
+given against Base64 rather than in MB/s**: these runs happen on shared cloud
+machines where an absolute figure says as much about the neighbour as about the
+codec, so each codec is timed bracketed between two Base64 readings and the
+quotient is reported. It is a *time* ratio — 0.9 is ten per cent faster than
+Base64, 1.7 is seventy per cent slower — and the spread beside it is the
+interquartile range across rounds. **A gap smaller than the spread is not a
+result.**
 
-| | chars/byte | in a JSON string | encode |
-|---|---|---|---|
-| Base64 | 1.33333 | same | — |
-| classic basE91 | 1.21517 | 1.23996 | 394 MB/s |
-| Base85N | 1.00698 | same | 483 MB/s |
-| **Base91z**, container only | **0.98354** | same | 76 MB/s |
+### No compressor in front of anybody
 
-### With a compressor
+Base91z's compressor is part of the format rather than a stage a caller bolts
+on, so this is the row it ships with; the others have none.
 
-Base64, basE91 and Base85N have none, so those rows are what a caller has to
-build. Base91z has one, and it is the same zstd.
+| | chars/byte | in a JSON string | encode | decode |
+|---|---|---|---|---|
+| Base64 | 1.33333 | same | 1.000 | 1.000 |
+| classic basE91 | 1.21517 | 1.23996 | 1.704 ± 0.045 | 3.119 ± 0.092 |
+| Base94Max | 1.20228 | 1.23639 | 1.801 ± 0.044 | 4.145 ± 0.082 |
+| Ascii85 | 1.18812 | 1.21326 | **0.875 ± 0.030** | 3.016 ± 0.074 |
+| Base85N | 1.00698 | same | 1.064 ± 0.027 | **0.991 ± 0.017** |
+| **Base91z** | **0.37432** | same | 1.039 ± 0.031 | 1.635 ± 0.030 |
 
-| | chars/byte | in a JSON string | encode |
-|---|---|---|---|
-| deflate → Base64 | 0.36127 | same | — |
-| deflate → basE91 | 0.33323 | 0.33598 | 27 MB/s |
-| zstd 1 → basE91 | 0.37383 | 0.37706 | 315 MB/s |
-| zstd 1 → Base85N | 0.37992 | same | 364 MB/s |
-| **Base91z**, zstd 1 | **0.37432** | same | **388 MB/s** |
-| zstd 3 → basE91 | 0.34344 | 0.34634 | 220 MB/s |
-| zstd 3 → Base85N | 0.34897 | same | 250 MB/s |
-| **Base91z**, zstd 3 | **0.34444** | same | **290 MB/s** |
-| zstd 9 → basE91 | 0.31325 | 0.31595 | 62 MB/s |
-| zstd 9 → Base85N | 0.31830 | same | 62 MB/s |
-| **Base91z**, zstd 9 | **0.31451** | same | **64 MB/s** |
+Take the compressor away and the container alone encodes the same corpus to
+**0.98354** — still under Base85N's 1.00698, and reproducible here with
+`cargo run --release --example corpus -- bench/corpus`.
 
-**Smallest in the JSON column at every compressor setting, and fastest at each
-one.** Classic basE91 is very slightly smaller as a raw string — its symbol
-floats between thirteen and fourteen bits where Base91z fixes it at thirteen —
-and gives that back and more the moment the string enters the document it was
-made for. `deflate → basE91` is the one row that is smaller in JSON than
-Base91z at zstd 3; it runs at 27 MB/s against 290, and Base91z at zstd 9 is
-smaller than it.
+### With the same compressor in front of everybody
+
+zstd at level 1, which is what `encode` uses by default. The other five get it
+as a stage in front; Base91z is told to make its own decision at that level.
+
+| | chars/byte | in a JSON string | encode | decode |
+|---|---|---|---|---|
+| Base64 | 0.40536 | same | 1.000 | 1.000 |
+| Ascii85 | 0.38002 | 0.38901 | 0.988 ± 0.010 | 1.580 ± 0.100 |
+| Base85N | 0.37992 | same | 0.914 ± 0.004 | **0.931 ± 0.004** |
+| **Base91z** | 0.37432 | **0.37432** | **0.859 ± 0.137** | 1.391 ± 0.134 |
+| classic basE91 | **0.37383** | 0.37706 | 1.140 ± 0.023 | 1.415 ± 0.052 |
+| Base94Max | **0.37184** | 0.37891 | 1.185 ± 0.026 | 1.763 ± 0.111 |
+
+**Smallest in the JSON column**, which is the column that decides the file that
+ships. Classic basE91 and Base94Max are smaller as raw strings — their symbols
+are wider than Base91z's fixed thirteen bits — and give it back the moment the
+string enters the document it was made for. On encode Base91z and Base85N are
+**tied**: the 0.055 between them is inside Base91z's own 0.137 of spread, and
+b2tb's rule is that a gap inside the spread is not an ordering.
+
+At level −5 the picture is the same shape: Base91z 0.52273 against Base85N's
+0.50479, and encode 0.786 ± 0.099 against 0.977 ± 0.013. At levels 9 and 19 the
+compressor is nearly all of the work for everybody and every codec's figure
+collapses towards 1.0, with a spread that swamps the differences — the honest
+reading there is that any throughput claim about a compressing encoder is a
+claim about zstd. The one exception is an already-compressed payload, where
+Base91z declines to compress at all and the image category comes out at 0.24 of
+Base64's time at level 9 and 0.017 at level 19.
+
+**Decoding is where Base91z is behind**: 1.391 against Base85N's 0.931 at level
+1, and 1.635 against 0.991 with no compressor. Ninety-one characters are a
+harder job for a byte-oriented decoder than eighty-five.
 
 On payloads too short for a compressor to have a window, which is where a field
 in a JSON document lives, no compressor is used at all and the typed classes
-carry it: over 55 field samples under 200 bytes, **0.925 against Base64's
-1.371** — hex digests 50 % smaller than Base64, decimal identifiers 47 %,
+carry it: over 55 field samples under 200 bytes, **0.9252 against Base64's
+1.3709** — hex digests 50 % smaller than Base64, decimal identifiers 47 %,
 UUIDs 37 %.
-
-Decoding is where Base91z is behind: 584 MB/s against Base85N's 1 331 on the
-same corpus. Ninety-one characters are a harder job for a byte-oriented decoder
-than eighty-five.
 
 ## The neighbourhood
 

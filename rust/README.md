@@ -299,15 +299,32 @@ because it has none. (These figures came from `examples/headtohead.rs`, which
 lived here until the comparison moved to the repository that has all six
 codecs.)
 
-| core corpus | size | encode | decode |
-|---|---|---|---|
-| Base85N 0.5.1 | 1.00698 | 486 MB/s | 1 331 MB/s |
-| **this crate, zstd 1** | **0.37432** | 403 MB/s | 584 MB/s |
-| **this crate, zstd −5** | **0.52273** | **502 MB/s** | 398 MB/s |
+Speed is a *time* ratio against Base64 measured in the same round — 0.9 is ten
+per cent faster than Base64, 1.7 is seventy per cent slower — with the
+interquartile range across rounds beside it. Ratios are only comparable
+**within** a stage: Base64 at `none` is a bare Base64 encode, and at `zstd:1` it
+is a zstd compression plus a Base64 encode, so the two columns have different
+denominators.
 
-Level 1 is the recommendation: 2.7× smaller at 83 % of the encode throughput.
-Level −5 is for throughput above all — half the size *and* faster, 502 against
-486 MB/s.
+With no external compressor for anybody, which is each codec as it ships —
+Base85N has none and this crate uses its default level:
+
+| core corpus, 6.52 MB | size | encode | decode |
+|---|---|---|---|
+| Base64 | 1.33333 | 1.000 | 1.000 |
+| Base85N 0.5.1 | 1.00698 | 1.064 ± 0.027 | **0.991 ± 0.017** |
+| **this crate** | **0.37432** | **1.039 ± 0.031** | 1.635 ± 0.030 |
+
+**2.7× smaller, and encoding is a tie**: 0.025 between the two is inside either
+spread, and a gap inside the spread is not an ordering. Decoding is behind by
+two thirds. With the same zstd in front of both — level 1 for everybody — this
+crate encodes at 0.859 ± 0.137 against Base85N's 0.914 ± 0.004, which is again
+a tie, and decodes at 1.391 ± 0.134 against 0.931 ± 0.004. At level −5 it is
+0.786 ± 0.099 against 0.977 ± 0.013.
+
+Sizes below are exact and reproducible here; the throughput figures above are
+[binary2textbench](https://github.com/keywan-ghadami/binary2textbench)'s, which
+is where every codec is built from source and timed in one process.
 
 Against what a Base85N caller would have to build to get a stream this small,
 which is zstd in front of it, given a stock frame over the whole file where

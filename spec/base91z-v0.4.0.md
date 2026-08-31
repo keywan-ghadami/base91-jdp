@@ -2037,17 +2037,31 @@ switches this format's compressor off, because a caller does not have one.
 
 #### Core corpus, 6.52 MB
 
+Speed is a time ratio against Base64 measured in the same round, with the
+interquartile range across rounds beside it: 0.9 is ten per cent faster than
+Base64, 1.7 is seventy per cent slower. Absolute throughput is not reported,
+because these runs happen on shared machines where it says as much about the
+neighbour as about the codec. Ratios are comparable **within** a stage only:
+Base64 at `none` is a bare Base64 encode, and at `zstd:1` it is a zstd
+compression plus a Base64 encode.
+
+With no external compressor for anybody, which is each codec as it ships:
+
 | | size | encode | decode |
 |---|---|---|---|
-| Base85N 0.5.1 | 1.00698 | 486 MB/s | 1 331 MB/s |
-| **Base91z, zstd 1** | **0.37432** | 403 MB/s | 584 MB/s |
-| **Base91z, zstd −5** | **0.52273** | **502 MB/s** | 398 MB/s |
+| Base64 | 1.33333 | 1.000 | 1.000 |
+| Base85N 0.5.1 | 1.00698 | 1.064 ± 0.027 | **0.991 ± 0.017** |
+| **Base91z**, its own default | **0.37432** | **1.039 ± 0.031** | 1.635 ± 0.030 |
 
-**Level 1 is the recommendation: 2.7 times smaller at 83 % of the encode
-throughput.** Level −5 is for a caller who wants encode throughput above
-everything: **half the size and faster at the same time**, 502 MB/s against
-486. Section 17.17 explains why that is not a paradox — compressing first hands
-the container a payload with nothing in it to scan, and the container then runs
+**Level 1 is the recommendation: 2.7 times smaller, and encoding is a tie** —
+0.025 separates the two where either spread is larger, and a gap inside the
+spread is not an ordering. With the same zstd in front of both, this format
+encodes at 0.859 ± 0.137 against Base85N's 0.914 ± 0.004 at level 1, and
+0.786 ± 0.099 against 0.977 ± 0.013 at level −5: a caller who wants encode
+throughput above everything takes −5 and gets **half the size at no cost in
+time**. Section 17.17 explains why that is not a paradox — compressing first
+hands the container a payload with nothing in it to scan, and the container
+then runs
 at three gigabytes a second.
 
 On Silesia the shape is the same: Base85N 1.05114, this format 0.41053 at level
@@ -2062,14 +2076,17 @@ in front of it. That pipeline is given every advantage here: a stock zstd frame
 over the whole file in one piece, where this format chunks at a mebibyte and
 pays 0.2 % for it (Section 17.9).
 
-| level | Base91z | encode | decode | zstd → Base85N | |
-|---|---|---|---|---|---|
-| −5 | 0.52273 | 502 MB/s | 403 MB/s | 0.50479 | +3.55 % |
-| −3 | 0.48073 | 474 MB/s | 422 MB/s | 0.46976 | +2.34 % |
-| −1 | 0.43652 | 437 MB/s | 437 MB/s | 0.42977 | +1.57 % |
-| **1** | **0.37432** | 397 MB/s | 571 MB/s | 0.37992 | **−1.47 %** |
-| 3 | **0.34444** | 272 MB/s | 475 MB/s | 0.34897 | **−1.30 %** |
-| 9 | **0.31451** | 63 MB/s | 648 MB/s | 0.31830 | **−1.19 %** |
+Sizes only: they are deterministic, so every digit is a real difference. The
+speed at each level is above, for the three levels the benchmark measures.
+
+| level | Base91z | zstd → Base85N | |
+|---|---|---|---|
+| −5 | 0.52273 | 0.50479 | +3.55 % |
+| −3 | 0.48073 | 0.46976 | +2.34 % |
+| −1 | 0.43652 | 0.42977 | +1.57 % |
+| **1** | **0.37432** | 0.37992 | **−1.47 %** |
+| 3 | **0.34444** | 0.34897 | **−1.30 %** |
+| 9 | **0.31451** | 0.31830 | **−1.19 %** |
 
 **Ahead from level 1 upward, behind below it**, and Section 10.1 says why: the
 negative levels leave literals uncoded, Base85N's passthrough reaches them and
@@ -2078,8 +2095,9 @@ pipeline is smaller, and level 1 is smaller than level −5 by 28 % anyway.
 
 #### Where this format is slower
 
-**It decodes between two and three times slower.** 584 MB/s at level 1 against
-Base85N's 1 331. Three per-byte costs came out of the decoder while this was
+**It decodes between one and two thirds slower.** 1.391 ± 0.134 against
+Base85N's 0.931 ± 0.004 at level 1, and 1.635 against 0.991 with no compressor
+in front of either. Three per-byte costs came out of the decoder while this was
 measured — a whole-stream copy to strip whitespace no stream contains, a walk
 over the R-Set per byte of passthrough, and a missing bulk path for block mode
 — which took a JPEG from 405 MB/s to 1 017 and CSS from 240 to 1 043. What
@@ -2087,9 +2105,10 @@ remains is the structure: 91 characters are a harder job for a byte-oriented
 decoder than 85, and the files that stay slowest are the ones with the most
 segments in them.
 
-**Without a compressor it encodes six times slower**, 77 MB/s against 486,
-because the candidate scan of Section 11.1 runs over every byte no class
-claims. This does not appear in the comparison above because the compressed
+**Without a compressor it encodes several times slower**, because the candidate
+scan of Section 11.1 runs over every byte no class claims. The benchmark has no
+row for it: it measures this format as it ships, which is with the compressor
+the format specifies. This does not appear in the comparison above because the compressed
 path does not run the scan at all (Section 11.5) — it is what a build that
 cannot link zstd would see.
 
