@@ -42,8 +42,9 @@ für fremde Quellen die ihrer Urheber.
 ## Richtigkeit der Inhalte
 
 Die Inhalte entstehen mit Sorgfalt und sind Arbeitsstände: die Spezifikation ist
-ein Entwurf, die Implementierung ein Prototyp, und Beschreibungen von Verfahren,
-Messungen und Analysen können unvollständig, überholt oder falsch sein. Sie sind
+zwar verabschiedet, die Implementierung aber ein Prototyp, und Beschreibungen
+von Verfahren, Messungen und Analysen können unvollständig, überholt oder falsch
+sein. Sie sind
 Information, keine Beratung und keine Zusicherung von Eigenschaften. Für die
 Programme in diesem Repository gilt der Gewährleistungsausschluss der
 [Lizenz](LICENSE). Für alles, was hier steht, hafte ich nach den allgemeinen

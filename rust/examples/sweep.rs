@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The three thresholds the 0.4.0 draft says must be re-swept, swept.
+//! The three thresholds the 0.4.0 specification says must be re-swept, swept.
 //!
 //! `MIN_BINARY_RUN` was measured against the 0.3.0 segment structure and does
 //! not transfer. The two run-break thresholds are new: without them the prefix

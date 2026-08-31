@@ -50,6 +50,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE_DIR = os.path.join(REPO_ROOT, "site")
 
 GITHUB_REPO = "https://github.com/keywan-ghadami/base91z"
+# The same thing without the scheme, for link text. Derived, because the
+# repository was renamed once and the footer went on naming the old one.
+GITHUB_LABEL = GITHUB_REPO.split("://", 1)[1]
 GITHUB_BLOB = GITHUB_REPO + "/blob/main/"
 GITHUB_TREE = GITHUB_REPO + "/tree/main/"
 
@@ -162,9 +165,11 @@ if len(SPECS) != 1:
         "belong in spec/history/." % len(SPECS)
     )
 
-# Shown in the footer. Derived, so a new specification version does not leave a
-# stale number on every page.
+# Shown in the footer. Derived, so neither a new specification version nor a
+# change of its status leaves a stale claim on every page -- the document says
+# what it is, and the footer repeats it.
 SPEC_VERSION = SPECS[0]["label"]
+SPEC_STATUS = SPECS[0]["status"].lower()
 
 
 def spec_pages():
@@ -390,14 +395,14 @@ TEMPLATE = """<!DOCTYPE html>
 </div>
 <footer class="site-footer">
   <div class="wrap">
-    <p><strong>Base91z</strong> - specification v{spec_version} (draft), with
-    a prototype encoder and decoder in Rust.</p>
+    <p><strong>Base91z</strong> - specification v{spec_version} ({spec_status}),
+    with a prototype encoder and decoder in Rust.</p>
     <p class="footer-warn">Specification and implementation were drafted with AI
     assistance and then verified against measurements, and reviews - security,
     documentation, usability, anything - are wanted. The specification carries
     its own security considerations; read them before decoding untrusted
     input.</p>
-    <p class="footer-meta">Source: <a href="{repo}">github.com/keywan-ghadami/base91-jdp</a>
+    <p class="footer-meta">Source: <a href="{repo}">{repo_label}</a>
     &middot; This page is generated from <a href="{source_url}">{source}</a>
     &middot; Contact: <a href="mailto:keywan.ghadami@gmail.com">keywan.ghadami@gmail.com</a>
     &middot; <a href="{root}impressum.html">Impressum</a></p>
@@ -536,9 +541,11 @@ def render_page(page, output_dir):
         page_class=(" has-toc" if sidebar else "") + page.body_class,
         root=root,
         repo=GITHUB_REPO,
+        repo_label=html.escape(GITHUB_LABEL),
         source=html.escape(page.source),
         source_url=GITHUB_BLOB + page.source,
         spec_version=SPEC_VERSION,
+        spec_status=html.escape(SPEC_STATUS),
     )
 
     destination = os.path.join(output_dir, page.output)

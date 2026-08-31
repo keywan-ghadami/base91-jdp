@@ -3,18 +3,25 @@
 | Field | Value |
 |---|---|
 | Version | 0.4.0 |
-| Status | Draft |
+| Status | Final |
 | Date | 2026-08-31 |
 | License | MPL-2.0 |
 | Supersedes | 0.3.0 |
 
-> **Draft.** The wire format is complete and there is a prototype encoder and
-> decoder for all of it, the compressed class included, in `rust/`. Section 17 is measured
-> against that prototype except where it says otherwise, and Section 17.3 and
-> the run break of Section 11.1 are both things the prototype found and the
-> arithmetic had missed. Sixteen of the forty-four segment classes are
-> unassigned, and a further forty-five are reachable through the escape, so the
-> format has room without spending any of it today.
+> **Final.** The wire format this document defines is fixed. A stream encoded
+> against it stays readable by every implementation that claims v0.4.0, and a
+> change that would alter what a decoder must accept is a new version rather
+> than an amendment to this one. What may still change here is the prose: an
+> error, an ambiguity or a passage that cannot be implemented as written is a
+> correction to make, and Section 20 asks for exactly those.
+>
+> There is a prototype encoder and decoder for all of it, the compressed class
+> included, in `rust/`. Section 17 is measured against that prototype except
+> where it says otherwise, and Section 17.3 and the run break of Section 11.1
+> are both things the prototype found and the arithmetic had missed. Sixteen of
+> the forty-four segment classes are unassigned, and a further forty-five are
+> reachable through the escape, so a later version has room without this one
+> spending any of it.
 
 ---
 
@@ -2493,7 +2500,9 @@ worth knowing.
 
 ## 20. Review and feedback are welcome
 
-This document is a draft, and it is more useful to us reviewed than admired.
+This document is final, which settles the wire format and settles nothing about
+whether the document describes it correctly: it is more useful to us reviewed
+than admired.
 Corrections, objections, "this cannot be implemented as written" and "you have
 measured the wrong thing" are all equally welcome — as issues, pull requests or
 mail. Nothing here is settled by seniority; a counterexample settles it.

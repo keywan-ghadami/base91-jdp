@@ -427,7 +427,9 @@ cargo +nightly build --release --features simd
 
 ## Status
 
-This is a prototype for a draft. The wire format may still change, nothing here
-is published to crates.io, and the specification's section 20 says what review
-would be most useful. Bugs found here are bugs in the format until shown
-otherwise — that is what it is for.
+This is a prototype implementation of a final specification. The wire format
+will not change under it — v0.4.0 is fixed, and a format change is a new version
+— but the crate is a prototype: nothing here is published to crates.io, the API
+is not settled, and the specification's section 20 says what review would be
+most useful. Bugs found here are bugs in the document until shown otherwise —
+that is what it is for.

@@ -3,7 +3,7 @@
 **basE91 on an alphabet JSON never has to escape, with typed segments and zstd
 inside.**
 
-[![Spec](https://img.shields.io/badge/spec-v0.4.0%20draft-orange)](spec/base91z-v0.4.0.md)
+[![Spec](https://img.shields.io/badge/spec-v0.4.0%20final-green)](spec/base91z-v0.4.0.md)
 [![Implementation](https://img.shields.io/badge/implementation-Rust%20prototype-blue)](rust/README.md)
 [![License](https://img.shields.io/badge/license-MPL--2.0-green)](LICENSE)
 
@@ -168,11 +168,14 @@ cargo run --release --manifest-path rust/Cargo.toml --example corpus -- bench/co
 
 ## Status, plainly
 
-**Draft, and not deployed anywhere.** The wire format is complete and
+**The specification is final; the implementation is a prototype, deployed
+nowhere.** The wire format is fixed — a stream encoded against v0.4.0 stays
+readable, and a change that would break one is a new version — and it is
 implemented, every class round-trips, and the parallel encoder is byte-identical
 to the serial one. What it has not had is a second reader: Section 20 of the
 specification says which parts would most repay one, and Section 17 says which
-numbers are measured and which are still arguments.
+numbers are measured and which are still arguments. Neither the document being
+final nor the numbers being measured makes that reading less worth having.
 
 Two things are open and named as open: the candidate ranking is greedy and a
 JWT shows it, and there is no C implementation. A third was closed here — the
