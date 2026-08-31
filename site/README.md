@@ -4,15 +4,16 @@ The site published at <https://keywan-ghadami.github.io/Base91z/> is
 generated from this directory by [`build.py`](build.py) and deployed by
 [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) on every push to
 `main` that touches the site, the specification, the benchmark report, the
-changelog or the README.
+changelog, the Impressum or the README.
 
 There is deliberately **no content here at all**. Every page, the landing page
 included, is rendered from a Markdown file that already lives in the repository
-— the project README, the specification, the benchmark results, the changelog —
-so the website cannot drift out of sync with the repository. Repository-relative
-links in those files are rewritten either to the corresponding generated page or
-to an absolute `github.com` URL, and heading anchors are slugified the way GitHub
-does it, so a link written for one works on the other.
+— the project README, the specification, the benchmark results, the changelog,
+the Impressum — so the website cannot drift out of sync with the repository.
+Repository-relative links in those files are rewritten either to the
+corresponding generated page or to an absolute `github.com` URL, and heading
+anchors are slugified the way GitHub does it, so a link written for one works on
+the other.
 
 The generator is [Base85N's](https://github.com/keywan-ghadami/base85n), adapted.
 The page list, the identity and the footer are this project's; the machinery is

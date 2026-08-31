@@ -158,7 +158,6 @@ UUIDs 37 %.
 | [`spec/`](spec/README.md) | The current specification, v0.4.0. Superseded versions in [`spec/history/`](spec/history/README.md). |
 | [`rust/`](rust/README.md) | The implementation: encoder, decoder, every class, parallel encoding, an optional vector path. |
 | [`bench/`](bench/README.md) | How the three corpora are fetched. The numbers are in Section 17 of the specification. |
-| [`history/`](history/README.md) | The v0.3.0 JavaScript implementation and the projections a prototype replaced. Not maintained. |
 | [`site/`](site/README.md) | The website generator. It has no content of its own. |
 
 ```sh
@@ -182,8 +181,10 @@ re-deriving them for the right one moved the table and moved no measurement
 outside the corpus it was fitted on.
 
 Earlier drafts of this format were called base91-jdp, and v0.3.0 of it was a
-different design that does not interoperate with this one. It is kept in
-[`history/`](history/javascript-v0.3.0/README.md).
+different design that does not interoperate with this one. Its specification is
+in [`spec/history/`](spec/history/README.md); the JavaScript implementation that
+went with it has been removed from the working tree and is reachable in the
+repository's git history.
 
 ## Credit
 
@@ -197,7 +198,9 @@ different design that does not interoperate with this one. It is kept in
 
 ## License
 
-Mozilla Public License 2.0. See [LICENSE](LICENSE).
+Mozilla Public License 2.0. See [LICENSE](LICENSE). Provider identification,
+contact and the terms the documents may be used under are in
+[IMPRESSUM.md](IMPRESSUM.md).
 
 ---
 

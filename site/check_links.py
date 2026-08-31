@@ -13,7 +13,8 @@ up as a 404 for a visitor. This checks both, on the generated HTML:
 * every relative ``href`` points at a file that exists in the output;
 * every ``#fragment`` matches an ``id`` on the page it points at.
 
-External (``http``/``https``/``mailto:``/``data:``) links are not fetched.
+External (``http``/``https``/``mailto:``/``tel:``/``data:``) links are not
+fetched.
 
 It also checks the *sources*, which the built site cannot catch. A Markdown
 link to a repository file that is not one of the generated pages -- an example,
@@ -35,7 +36,7 @@ import sys
 
 LINK_RE = re.compile(r'<a\b[^>]*?\shref="([^"]*)"', re.IGNORECASE)
 ID_RE = re.compile(r'\sid="([^"]+)"', re.IGNORECASE)
-EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "data:", "//")
+EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:", "data:", "//")
 
 # Inline Markdown links: [text](target), with an optional "title" and optional
 # <> around the target. Reference-style links are not used in this repository.
