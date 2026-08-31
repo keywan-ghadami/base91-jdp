@@ -49,7 +49,7 @@ except ImportError:  # pragma: no cover - developer convenience
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE_DIR = os.path.join(REPO_ROOT, "site")
 
-GITHUB_REPO = "https://github.com/keywan-ghadami/base91-jdp"
+GITHUB_REPO = "https://github.com/keywan-ghadami/base91z"
 GITHUB_BLOB = GITHUB_REPO + "/blob/main/"
 GITHUB_TREE = GITHUB_REPO + "/tree/main/"
 
@@ -61,9 +61,9 @@ SITE_TAGLINE = (
 
 # The current documents are `base91z-vX.Y.Z.md`. Superseded ones under
 # `spec/history/` keep the name the format had when they were written, which
-# up to v0.3.0 was base91-jdp -- renaming a published document would make it
+# up to v0.3.0 was base91z -- renaming a published document would make it
 # a different document.
-SPEC_FILE_RE = re.compile(r"^(?:base91z|base91-jdp)-v(\d+)\.(\d+)\.(\d+)\.md$")
+SPEC_FILE_RE = re.compile(r"^(?:base91z)-v(\d+)\.(\d+)\.(\d+)\.md$")
 # The metadata table at the top of a specification. Older versions bold the
 # field name, newer ones do not, so the asterisks are optional here.
 SPEC_FIELD_RE = re.compile(
