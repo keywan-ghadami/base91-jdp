@@ -14,7 +14,7 @@
   "license": "MPL-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keywan-ghadami/base91-jdp.git"
+    "url": "git+https://github.com/keywan-ghadami/base91z.git"
   },
   "engines": {
     "node": ">=18.11"

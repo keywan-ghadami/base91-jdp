@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — v0.4.0 draft
+## Unreleased — v0.4.0
 
 **The format is now called Base91z.** Drafts up to v0.3.0 were base91-jdp; the
 documents under `spec/history/` keep the name they were published under and
@@ -111,7 +111,7 @@ nothing on either corpus it is not.** The core corpus stays at 0.98354, the
 short group at 0.92524 and every compressed level is unchanged to five decimals.
 The donors past the first are not where this format's density comes from. The
 table still changes, so a 0.4.0 stream from before this entry and one from after
-do not agree on passthrough segments -- the format is a draft and has had no
+do not agree on passthrough segments -- the format was still a draft and had no
 users, so that is a note rather than a break.
 
 `tables::tuning` grew the hook the derivation needed, which is a pointer to the
@@ -162,13 +162,24 @@ for, that generative AI was used in drafting them, and that text and data mining
 is permitted. It is published as `impressum.html` and linked from the footer of
 every page.
 
+**The specification is final.** v0.4.0 is no longer a draft: the wire format is
+fixed, a stream encoded against it stays readable by anything that claims the
+version, and a change that would alter what a decoder must accept is a new
+version rather than an amendment. The document's status field says `Final`, and
+the site's footer reads that field rather than asserting a status of its own, so
+the two cannot disagree. What is *not* claimed by this is the implementation:
+`rust/` stays a prototype, nothing is published to crates.io, and Section 20 of
+the specification still asks for the review it has not had. Corrections to the
+document are still wanted and still possible — what is closed is the format, not
+the prose.
+
 Everything below this line is the history of v0.3.0 and earlier.
 
 ---
 
-The format is a draft and has had no users, so nothing here is a compatibility
-note. These entries exist so that we can tell which version we mean when we
-talk about one.
+Up to and including 0.3.0 the format was a draft and had no users, so nothing
+below is a compatibility note. These entries exist so that we can tell which
+version we mean when we talk about one.
 
 ## 0.3.0 — 2026-08-23
 

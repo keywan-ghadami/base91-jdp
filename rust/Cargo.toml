@@ -8,7 +8,7 @@ rust-version = "1.88"
 description = "Base91z: basE91 on a JSON-safe alphabet, with typed segments. Prototype encoder and decoder for specification v0.4.0."
 license = "MPL-2.0"
 authors = ["Keywan Ghadami"]
-repository = "https://github.com/keywan-ghadami/base91-jdp"
+repository = "https://github.com/keywan-ghadami/base91z"
 keywords = ["base91", "base64", "encoding", "binary-to-text", "json"]
 categories = ["encoding", "text-processing"]
 
