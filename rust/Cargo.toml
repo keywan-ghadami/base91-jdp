@@ -84,6 +84,10 @@ name = "frames"
 required-features = ["zstd"]
 
 [[example]]
+name = "levels"
+required-features = ["zstd"]
+
+[[example]]
 name = "longdata"
 required-features = ["zstd"]
 
