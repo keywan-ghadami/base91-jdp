@@ -6,4 +6,4 @@ specification is one link away: [`../README.md`](../README.md).
 
 | Version | Status | Superseded by |
 |---|---|---|
-| [base91-jdp v0.3.0](base91-jdp-v0.3.0.md) | Superseded | 0.4.0 |
+| [base91-jdp v0.3.0](base91z-v0.3.0.md) | Superseded | 0.4.0 |

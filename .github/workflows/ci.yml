@@ -65,16 +65,3 @@ jobs:
         run: |
           python site/build.py --output _site
           python site/check_links.py _site
-
-  superseded:
-    name: v0.3.0, kept working
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-      # Not maintained, but it should not rot silently either: it is what every
-      # number the superseded specification publishes came from.
-      - run: npm test
-        working-directory: history/javascript-v0.3.0

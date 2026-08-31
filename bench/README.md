@@ -78,6 +78,7 @@ cargo run --release --example ablate                          # what each class 
 cargo run --release --example sweep   -- ../bench/corpus     # the constants
 ```
 
-Measurements of the superseded v0.3.0 are in
-[`history/javascript-v0.3.0/results/`](../history/javascript-v0.3.0/results/RESULTS.md).
-They are correct about that version and say nothing about this one.
+Measurements of the superseded v0.3.0 were made by its JavaScript
+implementation, which is no longer in the working tree; they are in the
+repository's git history, are correct about that version and say nothing about
+this one.

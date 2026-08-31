@@ -145,6 +145,23 @@ version's R-Set. `tools/traincorpus.py` stays at the root, because it feeds
 that: the training corpus is deliberately disjoint from the benchmark corpus,
 so the table in Section 8.2 is not fitted to the files it is measured on.
 
+**`history/` is gone from the working tree.** It held the complete v0.3.0
+JavaScript implementation and the two projections a prototype replaced — code
+that implements a wire format this one does not interoperate with, that CI built
+and tested on every push, and that nothing here depends on. Git keeps it: the
+last commit that contains it is what a reader who wants 0.3.0's code needs, and
+the entries above are unchanged, because they describe where things stood when
+they were written. What is *documentation* of 0.3.0 stays where it was —
+`spec/history/` still holds the specification, which is the part a decision gets
+traced to. The site loses its `history.html` page and CI its `superseded` job.
+
+**The repository has an Impressum.** `IMPRESSUM.md` is the provider
+identification § 5 DDG and § 18 MStV require for the published site, and it also
+says what the documents — as opposed to the code, which is MPL-2.0 — may be used
+for, that generative AI was used in drafting them, and that text and data mining
+is permitted. It is published as `impressum.html` and linked from the footer of
+every page.
+
 Everything below this line is the history of v0.3.0 and earlier.
 
 ---
