@@ -125,6 +125,49 @@ Take the compressor away and the container alone encodes the same corpus to
 **0.98354** — still under Base85N's 1.00698, and reproducible here with
 `cargo run --release --example corpus -- bench/corpus`.
 
+**Three of those numbers are corpus averages rather than constants, and they
+look impossible if you read them as constants.** A *fixed* radix-91 code cannot
+do better than 8 / log₂ 91 = **1.2293** characters a byte, so classic basE91's
+1.21517 reads like an arithmetic error. It is not one, because basE91 is not a
+fixed radix code: it takes thirteen bits from the input for a pair of
+characters, but **fourteen whenever those thirteen come to 88 or less** — and a
+pair can hold 91² = 8 281 values, which is 89 more than thirteen bits need.
+Those 89 are what the wide case spends. On uniform random bytes it fires 1.1 %
+of the time and the encoding costs 1.22973; on bytes with long zero runs it
+fires constantly and the encoding approaches 8/7 = 1.14286. So the column is
+measuring the *corpus* as much as the codec, and this corpus contains an
+uncompressed tar, an ELF shared object and a WebAssembly module, all of which
+pad with zeroes:
+
+| classic basE91 on | chars/byte | wide pairs | zero bytes |
+|---|---|---|---|
+| `_cffi_backend.so` | 1.19021 | 44.3 % | 43.6 % |
+| `requests-2.32.3.tar` | 1.20617 | 26.5 % | 24.1 % |
+| `commonmark-spec.txt` | 1.22946 | 1.4 % | 0 % |
+| `countries.min.json` | 1.23070 | 0.1 % | 0 % |
+| all thirteen together | **1.21517** | | |
+
+Those four rows are the basE91 encoder in
+[binary2textbench](https://github.com/keywan-ghadami/binary2textbench/blob/main/runner-rust/src/codecs.rs)
+run over the corpus `bench/fetch.sh` materialises; the last row is the table
+above.
+
+Base94Max is the same adaptive thirteen-or-fourteen bits over a 94-character
+alphabet, and reads the same way. Ascii85's 1.18812 is a different mechanism
+with the same moral: four zero bytes are written as the single character `z`,
+which is worth nothing on prose and a great deal on a tar — 1.25 flat without
+the shortcut, 1.18812 with it, on these files.
+
+**Base64 is the only constant in the column**: 1.33333 whatever the bytes are,
+because it has no case that spends its alphabet differently — which is one
+reason it is the thing everything else is reported against. Base85N is if
+anything more input-dependent than basE91, not less: its passthrough writes a
+character the alphabet already holds as itself, one character for one byte, so
+1.00698 is a corpus with a lot of text in it and not a property of the codec.
+Base91z's 0.37432 is the extreme of the same thing, being a compressor and a
+set of typed classes. Read the whole column as "on this corpus", never as "per byte,
+always".
+
 ### With the same compressor in front of everybody
 
 zstd at level 1, which is what `encode` uses by default. The other five get it
