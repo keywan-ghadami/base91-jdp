@@ -65,10 +65,27 @@ pub fn encode_parallel_stats(data: &[u8], threads: usize) -> (String, ParallelSt
 
 /// The same with the chunking handed in, so a test can reach the seam with
 /// small chunks instead of megabyte ones.
+///
+/// # Panics
+///
+/// If `chunk` is zero or is not a multiple of [`PARALLEL_ALIGN`]. A chunk is a
+/// whole number of symbol groups by construction: thirteen bytes are eight
+/// pairs are sixteen characters, with no bits owed at either end, and that is
+/// the only reason a worker's output can be spliced in rather than re-encoded.
+/// A chunk that ended mid-group would produce output that is not wrong so much
+/// as not this format, so it is refused rather than rounded -- rounding a
+/// caller's argument silently is how a benchmark comes to measure a chunk size
+/// nobody asked for. [`encode_parallel`] computes an aligned chunk itself and
+/// cannot trip this.
 pub fn encode_with_chunk(data: &[u8], chunk: usize) -> String {
     encode_with_chunk_stats(data, chunk).0
 }
 
+/// The same, and what the join had to do to get there.
+///
+/// # Panics
+///
+/// As [`encode_with_chunk`].
 pub fn encode_with_chunk_stats(data: &[u8], chunk: usize) -> (String, ParallelStats) {
     assert!(chunk > 0 && chunk.is_multiple_of(PARALLEL_ALIGN), "chunks are whole symbol groups");
     if data.is_empty() {
@@ -142,6 +159,8 @@ pub fn encode_with_chunk_stats(data: &[u8], chunk: usize) -> (String, ParallelSt
         out.extend_from_slice(&enc.out);
     }
     enc.finish_into(&mut out);
+    // SAFETY: `out` is the concatenation of encoder outputs, each of which is
+    // alphabet characters only, and the alphabet is ASCII.
     (unsafe { String::from_utf8_unchecked(out) }, stats)
 }
 

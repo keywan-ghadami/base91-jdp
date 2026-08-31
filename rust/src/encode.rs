@@ -143,6 +143,9 @@ pub fn encode_plain(data: &[u8]) -> String {
     // Every byte emitted is an alphabet character, so this is ASCII by
     // construction; the check is one pass and only in debug builds.
     debug_assert!(enc.out.iter().all(|&b| VALUE_OF[b as usize] != 0xFF));
+    // SAFETY: every byte in `out` was emitted as an alphabet character, and
+    // the alphabet is ASCII, so the buffer is valid UTF-8. The debug assertion
+    // above is the same claim, checked.
     unsafe { String::from_utf8_unchecked(enc.out) }
 }
 
@@ -232,7 +235,7 @@ pub fn encode_region_until(
             // stretch of any length is one bulk call rather than one per
             // window. The walk stops at the first position a window does
             // report, and the scan below takes it from there.
-            while end + crate::simd::LANES + 1 <= data.len() {
+            while end + crate::simd::LANES < data.len() {
                 let live = crate::simd::candidate_mask(data, end) & !margin;
                 if live != 0 {
                     end += live.trailing_zeros() as usize;
@@ -284,6 +287,8 @@ pub fn block_only(data: &[u8]) -> String {
     let mut out = Vec::with_capacity(2 * (8 * data.len() + 12) / 13 + 2);
     block_bulk(&mut acc, &mut out, data);
     acc.finish(&mut out);
+    // SAFETY: the block coder emits alphabet characters and nothing else, and
+    // the alphabet is ASCII.
     unsafe { String::from_utf8_unchecked(out) }
 }
 

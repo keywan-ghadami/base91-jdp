@@ -5,6 +5,14 @@
 // The `simd` feature is nightly-only, and deliberately the only thing in this
 // crate that is: see src/simd.rs and the README section it points at.
 #![cfg_attr(feature = "simd", feature(portable_simd))]
+// This crate decodes input it did not write, and it does so through thirteen
+// `unsafe` blocks -- the bulk paths, and the three places an alphabet-only
+// buffer becomes a `String` without a second pass. Each one carries a
+// `// SAFETY:` comment saying what makes it sound; these two lints are what
+// keep that true rather than merely true today. See `rust/README.md`, "What
+// has been done to it", for the rest of what is run against them.
+#![deny(clippy::undocumented_unsafe_blocks)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 //! # Base91z
 //!

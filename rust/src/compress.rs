@@ -291,6 +291,9 @@ pub fn encode_zstd(data: &[u8], level: i32) -> std::io::Result<String> {
             Ok(())
         })?;
     }
+    // SAFETY: `out` holds signal pairs and segment payloads, both written as
+    // alphabet characters, and the alphabet is ASCII. A zstd frame reaches
+    // this buffer through the block coder, never as raw bytes.
     Ok(unsafe { String::from_utf8_unchecked(out) })
 }
 

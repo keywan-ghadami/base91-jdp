@@ -10,8 +10,10 @@ on:
       # change to the site.
       - "README.md"
       - "CHANGELOG.md"
-      # Published as the Impressum page, linked from every footer.
+      # Published as the Impressum and Security pages, linked from every
+      # footer.
       - "IMPRESSUM.md"
+      - "SECURITY.md"
       # bench/README.md is published as the Benchmarks page.
       - "bench/**"
       - ".github/workflows/pages.yml"

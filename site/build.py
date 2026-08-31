@@ -118,9 +118,97 @@ def discover_specs(subdir):
     return found
 
 
+# What a specification document is called, loosely enough to survive another
+# rename of the format: a name, a version, `.md`.
+SPEC_LINK_RE = re.compile(r"^[A-Za-z0-9-]+-v\d+\.\d+\.\d+\.md$")
+
+# A row of a specification index: the cells between the outer pipes.
+INDEX_ROW_RE = re.compile(r"^\|(.+)\|\s*$", re.M)
+
+
+def index_rows(index):
+    """Every table row in an index, as a list of stripped cells."""
+    return [[cell.strip() for cell in m.group(1).split("|")]
+            for m in INDEX_ROW_RE.finditer(index)]
+
+
+def index_date_column(index):
+    """Which column of the index holds a document's date, if any.
+
+    `spec/README.md` has one; `spec/history/README.md` has "Superseded by"
+    there instead, because what a reader of that page wants is which version
+    replaced this one. So this returns None rather than guessing, and the date
+    check below applies only where there is a date to check.
+    """
+    for cells in index_rows(index):
+        for i, cell in enumerate(cells):
+            if cell.lower() == "date":
+                return i
+        # Only the header row can declare it, and it is the first row.
+        return None
+    return None
+
+
+def spec_index_problems(index, directory, specs):
+    """What is wrong between one index and the documents beside it.
+
+    Returns a list of one-line problems, empty when the two agree. Separated
+    from the file reading so it can be tested against an index that is wrong
+    on purpose -- see `site/test_checks.py`, which exists because two of the
+    checks below were silently dead.
+    """
+    problems = []
+    # Only links that stay inside this directory count. An index may point at
+    # a document in the other one -- the history index links up to the current
+    # specification, and should -- and a `../` link is exactly that, not a
+    # claim about what is here.
+    names = {os.path.basename(s["path"]) for s in specs}
+    for spec in specs:
+        name = os.path.basename(spec["path"])
+        if not re.search(r"(?<!\.\./)" + re.escape(name), index):
+            problems.append("not listed: " + spec["path"])
+
+    # An entry is a link, and only a link whose target stays in this
+    # directory: the history index points up at the current specification with
+    # `../`, which is not a claim about what is here.
+    #
+    # Matched case-insensitively against actual link targets rather than
+    # against the text. The pattern this replaces looked for `Base91z-v*.md`
+    # in the prose while every document had been renamed to lowercase
+    # `base91z-`, so nothing was ever stale and the check was dead for every
+    # commit after the rename; and a name pattern loose enough to survive
+    # another rename will happily start matching in the middle of `../name`,
+    # which a lookbehind does not prevent.
+    linked = set()
+    for target in re.findall(r"\]\(\s*<?([^)<>\s]+)>?\s*\)", index):
+        if "/" in target or "://" in target:
+            continue
+        if SPEC_LINK_RE.match(target):
+            linked.add(target.lower())
+    for name in sorted(linked - {n.lower() for n in names}):
+        problems.append("listed but missing: %s/%s" % (directory, name))
+
+    # And the date, where the index publishes one. The build already refuses a
+    # document whose file name and version field disagree; this is the same
+    # rule for the date, which had drifted by six days before anything looked.
+    column = index_date_column(index)
+    if column is not None:
+        for spec in specs:
+            name = os.path.basename(spec["path"])
+            for cells in index_rows(index):
+                if any(name in cell for cell in cells) and len(cells) > column:
+                    if cells[column] != spec["date"]:
+                        problems.append(
+                            "%s says it is dated %s; the index says %s"
+                            % (spec["path"], spec["date"], cells[column])
+                        )
+    return problems
+
+
 def check_spec_index(index_doc, specs):
     """Every specification in a directory is listed in that directory's index,
-    and nothing is listed there that does not exist.
+    nothing is listed there that does not exist, and the index agrees with each
+    document about its date.
 
     The indexes are repository documents -- they are read on GitHub too -- so
     they are written by hand rather than generated. This is what stops a
@@ -135,21 +223,11 @@ def check_spec_index(index_doc, specs):
     index_path = os.path.join(REPO_ROOT, *index_doc.split("/"))
     with open(index_path, encoding="utf-8") as fh:
         index = fh.read()
-    # Only links that stay inside this directory count. An index may point at
-    # a document in the other one -- the history index links up to the current
-    # specification, and should -- and a `../` link is exactly that, not a
-    # claim about what is here.
-    names = {os.path.basename(s["path"]) for s in specs}
-    missing = [s["path"] for s in specs
-               if not re.search(r"(?<!\.\./)" + re.escape(os.path.basename(s["path"])),
-                                index)]
-    linked = set(re.findall(r"(?<!\.\./)(Base91z-v\d+\.\d+\.\d+\.md)", index))
-    stale = sorted(linked - names)
-    if missing or stale:
+    problems = spec_index_problems(index, directory, specs)
+    if problems:
         raise SystemExit(
             "%s is out of step with %s/:\n" % (index_doc, directory)
-            + "".join("  not listed: %s\n" % p for p in missing)
-            + "".join("  listed but missing: %s/%s\n" % (directory, p) for p in stale)
+            + "".join("  %s\n" % p for p in problems)
         )
 
 
@@ -300,6 +378,17 @@ PAGES = [
         strip_first_heading=True,
     ),
     Page(
+        source="SECURITY.md",
+        output="security.html",
+        title="Security",
+        toc=True,
+        subtitle=(
+            "How to report something, what the threat model is, and what is "
+            "run against the decoder."
+        ),
+        strip_first_heading=True,
+    ),
+    Page(
         # Linked from the footer of every page rather than the navigation: it
         # has to be reachable from anywhere, and it is not what a reader came
         # for.
@@ -336,6 +425,7 @@ PATH_TO_PAGE = {
     "rust/README.md": "implementation.html",
     "rust": "implementation.html",
     "IMPRESSUM.md": "impressum.html",
+    "SECURITY.md": "security.html",
     "CHANGELOG.md": "changelog.html",
 }
 
@@ -405,6 +495,7 @@ TEMPLATE = """<!DOCTYPE html>
     <p class="footer-meta">Source: <a href="{repo}">{repo_label}</a>
     &middot; This page is generated from <a href="{source_url}">{source}</a>
     &middot; Contact: <a href="mailto:keywan.ghadami@gmail.com">keywan.ghadami@gmail.com</a>
+    &middot; <a href="{root}security.html">Security</a>
     &middot; <a href="{root}impressum.html">Impressum</a></p>
   </div>
 </footer>

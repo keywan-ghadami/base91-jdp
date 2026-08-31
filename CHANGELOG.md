@@ -173,6 +173,78 @@ the specification still asks for the review it has not had. Corrections to the
 document are still wanted and still possible — what is closed is the format, not
 the prose.
 
+**The crate is packaged to publish, and hardened first.** `rust/` carries the
+metadata a crates.io release needs -- readme, homepage, documentation, and an
+`exclude` for the fuzz package, which is its own workspace with a path
+dependency back and cannot build from a tarball -- and `cargo package` builds
+it. It is not published: the API is not settled and Section 20 of the
+specification still asks for a review nobody has done.
+
+**Five fuzz targets, in `rust/fuzz/`.** Round trip; the decoder on arbitrary
+bytes; the decoder on bytes folded onto the alphabet, so the run is spent past
+the character check rather than on it; the parallel encoder against the serial
+one with the chunk boundary anywhere; and `decode_structured`, which builds
+streams field by field -- a class, a length drawn from a table of nothing but
+boundaries, a run value -- because a fuzzer mutating a four-byte integer does
+not find `MAX_SEGMENT_BYTES + 1` and choosing a table index does. Roughly ten
+million executions across the five, under AddressSanitizer, with no crash in
+the decoder.
+
+**One finding, in the encoder's public surface.** `encode_with_chunk` asserts
+that a chunk is a whole number of symbol groups, and documented that nowhere;
+the `parallel` target found it on the empty input within four minutes. The
+assertion is right -- a chunk ending mid-group could not be spliced, which is
+what makes the parallel encoder possible at all -- so it stays, with a
+`# Panics` section saying so and four tests holding both halves: the inputs
+that must panic, and the aligned sizes that must agree with the serial
+encoder.
+
+**`tests/adversarial.rs`: the decoder led into the weeds on purpose.** Fifteen
+tests over streams no encoder would write -- a length of zero on every class
+that has one, a length one past the class bound, the largest the three-tier
+field can express (about 68.5 million against a bound of 65 536), a run of the
+whole 65 536 against a thousand-byte budget and one that fits it exactly, a run
+byte of 0 and of 256, a tier-three digit above the radix, an undefined class,
+the escape, a flush field wider than it declares, a budget of zero, and every
+prefix of each. They assert the error *code*, not merely that something failed,
+so a refusal cannot quietly become a different refusal. The decoder passed all
+of them as written; nothing in it changed.
+
+**Thirteen `unsafe` blocks, thirteen `SAFETY` comments, and a lint.**
+`clippy::undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn` are denied at
+the crate root, so a fourteenth block without a comment does not compile. Miri
+runs the container-only build -- every raw pointer in this crate is there, and
+Miri cannot cross into zstd's C. `cargo audit` and `cargo deny check` run
+against the committed lockfile, with a `deny.toml` that allows permissive
+licences plus this crate's own, refuses a wildcard version, and refuses a
+source that is not crates.io. All of it is in CI, and `SECURITY.md` says what
+it covers and what it does not.
+
+Clippy stopped being `continue-on-error` in the same commit. It passes clean,
+and a lint that reports without failing is a lint nobody reads.
+
+**Three more things this turned up, all fixed, all with a regression test:**
+
+* The fuzz targets' `#[cfg(feature = "zstd")]` was read against the *fuzz*
+  package's features, which had none, so the compressed class compiled out of
+  the round-trip target and was never fuzzed -- and the build succeeded, with
+  one warning. The feature is forwarded now, and a `compile_error!` fires if it
+  is ever absent without `--features container-only` saying so on purpose.
+* Nightly clippy had never run on the `simd` paths, because they are
+  nightly-only and CI linted on stable. Eight findings had accumulated,
+  including a documentation list whose second item had lost its bullet. Fixed,
+  and nightly clippy is a CI step now.
+* `site/build.py`'s stale-entry check matched `Base91z-v*.md` while every
+  document had been renamed to lowercase `base91z-`, so no index entry was ever
+  stale and the check had been dead since the rename. It matches link targets
+  case-insensitively now.
+* Nothing compared a specification index's date column to the document's own
+  date field, which is how `spec/README.md` came to publish 2026-08-25 for a
+  document dated 2026-08-31. It is checked now, and both checks are covered by
+  `site/test_checks.py` -- ten regression tests, standard library only, one per
+  bug that reached the published site, including the `tel:` link and the footer
+  that named a repository after it had been renamed.
+
 Everything below this line is the history of v0.3.0 and earlier.
 
 ---

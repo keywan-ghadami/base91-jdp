@@ -1,0 +1,77 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# Its own workspace: the crate under test is not one, and a fuzz package that
+# joined it would put libfuzzer-sys and a nightly-only build into every
+# ordinary `cargo test`.
+[workspace]
+members = ["."]
+
+[package]
+name = "base91z-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.base91z]
+path = ".."
+default-features = false
+
+# Forwarded, not inherited: `#[cfg(feature = "zstd")]` inside a fuzz target is
+# read against *this* package's features, so without these two lines the
+# compressed class compiles out of the target and is never fuzzed while the
+# build still succeeds. That happened.
+[features]
+default = ["zstd"]
+zstd = ["base91z/zstd"]
+# Fuzzing the container without a compressor, said out loud. Without this the
+# targets refuse to build when `zstd` is absent, rather than quietly dropping
+# the classes that depend on it.
+container-only = []
+
+[profile.release]
+debug = 1
+
+# `cargo fuzz` generates these; written out so the targets are declared rather
+# than discovered, and so `--no-default-features` builds are a one-line change.
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_any"
+path = "fuzz_targets/decode_any.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_alphabet"
+path = "fuzz_targets/decode_alphabet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_structured"
+path = "fuzz_targets/decode_structured.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parallel"
+path = "fuzz_targets/parallel.rs"
+test = false
+doc = false
+bench = false

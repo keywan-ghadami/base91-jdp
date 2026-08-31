@@ -425,6 +425,43 @@ answer costs a scalar step, and the whole test suite runs under both.
 cargo +nightly build --release --features simd
 ```
 
+## What has been done to it
+
+A decoder is handed its input by whoever sent it, and this one reaches that
+input through thirteen `unsafe` blocks. What is run against that, and what it
+found, is in [`../SECURITY.md`](../SECURITY.md); the short version:
+
+| | |
+|---|---|
+| [`tests/adversarial.rs`](tests/adversarial.rs) | Streams no encoder would write -- a length of zero, a length one past the class bound, a run of the whole 65 536 against a thousand-byte budget, a run byte of 0 and of 256, a tier-three length digit above the radix, a class this version does not define, the escape, a flush field wider than it declares, and every prefix of each. Asserted down to the error *code*, so a refusal cannot quietly become a different refusal. |
+| [`fuzz/`](fuzz/README.md) | Five cargo-fuzz targets under AddressSanitizer, including one that builds streams field by field from a table of boundary lengths rather than mutating bytes and hoping. |
+| `cargo miri test --no-default-features` | The raw-pointer bulk paths: the sixteen-byte store that advances thirteen, and the `set_len` that follows it. |
+| `cargo audit`, `cargo deny check` | Advisories against the committed lockfile; licences, sources and wildcard versions against [`deny.toml`](deny.toml). |
+| `#![deny(clippy::undocumented_unsafe_blocks)]` | Every `unsafe` block carries a `// SAFETY:` comment. A fourteenth without one does not compile. |
+
+All of it runs in CI. The fuzz job is a thirty-second smoke per target, which
+catches a target that stopped building or fails on its first input; a long run
+is a person's job, and what one finds becomes a named case in
+`tests/adversarial.rs` rather than a corpus file.
+
+No decoder bug yet. What it has found:
+
+* **`encode_with_chunk` panics on a chunk that is not a whole symbol group,
+  and said so nowhere a caller would look.** The `parallel` target hit it on
+  the empty input in under four minutes. The assertion is right -- a chunk
+  ending mid-group could not be spliced, which is the whole basis of the
+  parallel encoder -- so the panic is documented now, under `# Panics`, and
+  four tests hold both halves of the contract.
+* **Nightly clippy had drifted eight findings**, because the `simd` paths are
+  nightly-only and CI linted on stable. One was a documentation list whose
+  second item had lost its bullet, so rustdoc had been rendering it wrong.
+* **The fuzz targets' `#[cfg(feature = "zstd")]`** was read against the fuzz
+  package's features, which had none, so the compressed class compiled out of
+  the round-trip target and was never fuzzed -- with the build succeeding.
+* **Two checks in `site/build.py` had gone dead**, and a third did not exist.
+
+Every one of them has a test that fails without the fix.
+
 ## Status
 
 This is a prototype implementation of a final specification. The wire format

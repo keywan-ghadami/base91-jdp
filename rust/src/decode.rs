@@ -272,6 +272,9 @@ impl<'a> Decoder<'a> {
         // visible: `set_len` counts thirteen per group.
         out.reserve(13 * groups + 16);
         let start = out.len();
+        // SAFETY: `start` is `out.len()`, which is at most its capacity, so
+        // the offset is in bounds or one past the end -- both allowed by
+        // `add`, and the pointer derives from the reservation just made.
         let mut dst = unsafe { out.as_mut_ptr().add(start) };
         let mut done = 0usize;
         while done < groups {
@@ -302,12 +305,22 @@ impl<'a> Decoder<'a> {
             // Sixteen bytes go out and the pointer advances thirteen, so the
             // next group overwrites the three that were not ours. `to_be`
             // puts the bytes in the order a big-endian read would see.
+            // SAFETY: `dst` is `start + 13 * done` with `done < groups`, and
+            // the reservation above is `13 * groups + 16` past `start`, so at
+            // least sixteen writable bytes remain for this store and the
+            // resulting pointer stays within the allocation. The write is
+            // unaligned by declaration, and `u128` has no invalid bit
+            // patterns.
             unsafe {
                 dst.cast::<u128>().write_unaligned(g.to_be());
                 dst = dst.add(13);
             }
             done += 1;
         }
+        // SAFETY: the loop wrote sixteen bytes at each of `done` positions
+        // thirteen apart from `start`, so `start + 13 * done` bytes are
+        // initialised, and the reservation covers that length. The three
+        // slack bytes past the last group stay outside the new length.
         unsafe { out.set_len(start + 13 * done) };
         self.at += 16 * done;
         Ok(done > 0)

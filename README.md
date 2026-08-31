@@ -159,6 +159,7 @@ UUIDs 37 %.
 | [`rust/`](rust/README.md) | The implementation: encoder, decoder, every class, parallel encoding, an optional vector path. |
 | [`bench/`](bench/README.md) | How the three corpora are fetched. The numbers are in Section 17 of the specification. |
 | [`site/`](site/README.md) | The website generator. It has no content of its own. |
+| [`SECURITY.md`](SECURITY.md) | The threat model, what is run against the decoder, and how to report something. |
 
 ```sh
 bench/fetch.sh                                           # fetch the corpus
@@ -176,6 +177,12 @@ to the serial one. What it has not had is a second reader: Section 20 of the
 specification says which parts would most repay one, and Section 17 says which
 numbers are measured and which are still arguments. Neither the document being
 final nor the numbers being measured makes that reading less worth having.
+
+The crate is packaged to publish and has not been published. What is run
+against it -- an adversarial decode suite, five fuzz targets, Miri over the
+raw-pointer paths, advisory and licence checks, and a lint that will not let an
+`unsafe` block through without a `SAFETY` comment -- is in
+[SECURITY.md](SECURITY.md), together with what has not been done.
 
 Two things are open and named as open: the candidate ranking is greedy and a
 JWT shows it, and there is no C implementation. A third was closed here — the
