@@ -135,12 +135,12 @@ than eighty-five.
 |---|---|
 | [`spec/`](spec/README.md) | The current specification, v0.4.0. Superseded versions in [`spec/history/`](spec/history/README.md). |
 | [`rust/`](rust/README.md) | The implementation: encoder, decoder, every class, parallel encoding, an optional vector path. |
-| [`bench/`](bench/README.md) | The three corpora and the Base85N reference harness. The numbers are in Section 17 of the specification. |
+| [`bench/`](bench/README.md) | How the three corpora are fetched. The numbers are in Section 17 of the specification. |
 | [`history/`](history/README.md) | The v0.3.0 JavaScript implementation and the projections a prototype replaced. Not maintained. |
 | [`site/`](site/README.md) | The website generator. It has no content of its own. |
 
 ```sh
-python3 bench/corpus.py --core                            # fetch the corpus
+bench/fetch.sh                                           # fetch the corpus
 cargo test  --manifest-path rust/Cargo.toml
 cargo run --release --manifest-path rust/Cargo.toml --example corpus -- bench/corpus
 ```

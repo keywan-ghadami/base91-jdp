@@ -15,7 +15,3 @@ __pycache__/
 
 # The central benchmark checkout that bench/fetch.sh pulls the corpus from.
 bench/.b2tb/
-
-# Base85N, checked out by .github/actions/base85n-checkout for the optional
-# path dependency in rust/Cargo.toml.
-.base85n/

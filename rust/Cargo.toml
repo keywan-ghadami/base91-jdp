@@ -36,18 +36,6 @@ zstd = ["dep:zstd"]
 # bytes repeat what the segment signal already said (specification section 10.1).
 zstd = { version = "0.13.3", optional = true, features = ["experimental"] }
 
-# The codec this one is compared against, built from its own source rather
-# than quoted from its documentation, so that both sides of every number in
-# `examples/headtohead.rs` run in one process under one timing harness. Off by
-# default and used by no part of the library; it needs a Base85N checkout
-# beside this repository.
-base85n = { path = "../../keywan-ghadami/base85n/rust", optional = true }
-
-# Deflate, for the one comparison that needs it: basE91 over a deflate stream
-# is what a caller reached for before zstd existed, and `examples/against.rs`
-# measures it. Off by default and used by no part of the library.
-flate2 = { version = "1", optional = true }
-
 [dev-dependencies]
 rand = "0.9"
 
@@ -106,14 +94,5 @@ required-features = ["zstd"]
 [[example]]
 name = "rans91"
 [[example]]
-name = "headtohead"
-required-features = ["zstd", "base85n"]
-[[example]]
-name = "decoderate"
-required-features = ["base85n"]
-[[example]]
 name = "scanframe"
-required-features = ["zstd", "base85n"]
-[[example]]
-name = "against"
-required-features = ["zstd", "base85n", "flate2"]
+required-features = ["zstd"]

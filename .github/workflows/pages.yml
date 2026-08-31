@@ -10,9 +10,8 @@ on:
       # change to the site.
       - "README.md"
       - "CHANGELOG.md"
-      # bench/results/ is published as the Benchmarks pages; without this the
-      # site would keep serving an older report after a re-run.
-      - "bench/results/**"
+      # bench/README.md is published as the Benchmarks page.
+      - "bench/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 

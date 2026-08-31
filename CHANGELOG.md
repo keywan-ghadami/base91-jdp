@@ -95,7 +95,31 @@ The reference implementation moved with it. v0.4.0 is implemented in
 `rust/`; the JavaScript package that implemented v0.3.0 is complete, tested and
 kept under `history/javascript-v0.3.0/`, where it is no longer published to npm
 and no longer maintained. The repository root no longer ships a library: what
-is at the root is the specification, the corpora and the tooling.
+is at the root is the specification, the implementation and the tooling.
+
+**Comparing against the other codecs moved out.** Sizes and throughput against
+Base64, classic basE91, Ascii85, Base85N and Base94Max are measured in
+[binary2textbench](https://github.com/keywan-ghadami/binary2textbench), which
+builds every codec from source, runs them in one process and puts the JSON
+escaping inside the clock. So `bench/base85n/` and the `headtohead`, `against`
+and `decoderate` examples are gone, and with them the optional `base85n` and
+`flate2` dependencies.
+
+That link mattered more than the examples did. It was a path dependency on a
+checkout *outside* the repository, and Cargo reads a path dependency whether or
+not its feature is enabled — so `cargo test`, `cargo clippy` and every example
+needed a second repository on disk before they would resolve at all, which is
+what `.github/actions/base85n-checkout` existed to arrange in three CI jobs.
+All three now check out this repository and nothing else. `examples/scanframe.rs`
+stays and keeps its own measurement; only its Base85N reference column went.
+
+**The v0.3.0 JavaScript tooling followed the v0.3.0 JavaScript.**
+`deriveprofiles.js`, `donorstats.js` and `lz4fixtures.py` import `src/codec.js`
+and `bench/lib.js`, which moved under `history/javascript-v0.3.0/` — so they had
+stopped resolving. They now sit beside what they import. `tools/traincorpus.py`
+stays at the root: the training corpus is deliberately disjoint from the
+benchmark corpus, which is a claim the current specification's Section 4.2
+still rests on.
 
 Everything below this line is the history of v0.3.0 and earlier.
 

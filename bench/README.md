@@ -33,7 +33,8 @@ codec's own author are a weak basis for a claim about real data, and Silesia
 was assembled by somebody else before this encoding existed.
 
 **short** — fifty-five field-level samples under 200 bytes, authored in
-[`wire_samples.py`](wire_samples.py) from invented values. It is the only group
+[`corpus/wire_samples.py`](https://github.com/keywan-ghadami/binary2textbench/blob/main/corpus/wire_samples.py) from
+invented values. It is the only group
 that reaches the packed bases of Section 9 at all, and the only one where three
 characters of segment overhead are visible. Its samples are chosen to exercise
 the classes, which makes it the wrong instrument for estimating how often each
@@ -43,27 +44,28 @@ Nothing is vendored: every downloaded sample is pulled from a pinned archive
 and checked against a recorded SHA-256, so a rerun either reproduces the same
 bytes or fails loudly.
 
-## The reference implementation of Base85N
+## Measuring against the other codecs
 
-`base85n/` runs the upstream Go implementation, v0.5.1, so that the size
-comparisons come from an execution rather than from its documentation. It needs
-Go on the path; without it those columns are left out.
+Nothing here does that any more. Sizes and throughput against Base64, classic
+basE91, Ascii85, Base85N and Base94Max are measured in
+[binary2textbench](https://github.com/keywan-ghadami/binary2textbench), which
+builds every codec from source and runs them in one process, so what is
+compared is six encodings and not six languages — and which puts the JSON
+escaping inside the clock, where an alphabet containing `"` or `\\` pays for
+itself twice.
 
-For **throughput**, Go against Rust would measure the languages. Base85N also
-ships a Rust implementation with the same shape as this one — a scalar path, an
-optional nightly vector path, a parallel encoder — and
-[`rust/examples/headtohead.rs`](../rust/README.md) links it directly, so both
-sides of every number in specification Section 17.21 are compiled by the same
-compiler at the same optimisation level and timed by the same loop in one
-process. It needs a Base85N checkout beside this repository:
+It used to be measured here twice over: `bench/base85n/` ran the upstream Go
+implementation for sizes, and `rust/examples/headtohead.rs`, `against.rs` and
+`decoderate.rs` linked Base85N's Rust crate for throughput. That link was an
+optional path dependency on a checkout *outside* this repository, and Cargo
+reads a path dependency whether or not its feature is enabled — so `cargo
+test`, `cargo clippy` and every example needed a second repository on disk
+before they would even resolve. The comparison is better done in one place that
+has all the codecs; the dependency went with it.
 
-```sh
-git clone https://github.com/keywan-ghadami/base85n ../keywan-ghadami/base85n
-cargo run --release --features base85n --manifest-path rust/Cargo.toml \
-    --example headtohead -- bench/corpus
-```
-
-The `base85n` feature is off by default and no part of the library uses it.
+`.github/workflows/bench.yml` calls that repository's composite action on every
+pull request, and the numbers it produced are still in Sections 17.21 and 17.22
+of the specification.
 
 ## Running the measurements
 

@@ -162,7 +162,8 @@ six times the throughput and buys one part in thirty thousand over the corpus
 `encode_zstd` skips the comparison; `encode_auto` makes it.
 
 **The short group found two more.** Fifty-five field-level samples under 200
-bytes, in `bench/wire_samples.py`, are the only benchmark that reaches the
+bytes, in binary2textbench's `corpus/wire_samples.py`, are the only benchmark
+that reaches the
 packed bases of section 9 at all — and the only one where three characters of
 segment overhead are visible. Against Base64: hex digests −50 %, decimal
 identifiers −47 %, UUIDs −37 %, tokens −25 %, protocol text −21 %, and −32.5 %
@@ -290,10 +291,13 @@ Nothing on a megabyte, 11 % on a protocol field. What it buys is the crossover:
 compresses where compression wins goes from 0.9252 to **0.9194** — the first
 time compression has improved that number at all.
 
-**Head to head with Base85N, both built from source.** `examples/headtohead.rs`
-runs both codecs in one process under one timing loop. Each is measured as it
-ships: this one with its compressor, which is part of the format, and Base85N
-without one, because it has none.
+**Head to head with Base85N, both built from source.** Measured by
+[binary2textbench](https://github.com/keywan-ghadami/binary2textbench), which builds every codec from source and runs
+them in one process under one timing loop. Each is measured as it ships: this
+one with its compressor, which is part of the format, and Base85N without one,
+because it has none. (These figures came from `examples/headtohead.rs`, which
+lived here until the comparison moved to the repository that has all six
+codecs.)
 
 | core corpus | size | encode | decode |
 |---|---|---|---|

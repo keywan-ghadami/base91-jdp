@@ -11,7 +11,7 @@ node bench/bench.js
 ```
 
 The benchmarks read the corpus from `bench/corpus/` at the repository root,
-which `python3 bench/corpus.py` fetches; that corpus is shared with the current
+which `bench/fetch.sh` fetches; that corpus is shared with the current
 version and did not move.
 
 ## What it is, and what it is not

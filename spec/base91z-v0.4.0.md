@@ -1249,7 +1249,7 @@ integrity claim (Section 2.3). The decoder is the security-relevant surface.
 
 ## 17. Measurements
 
-The corpus is fetched by `bench/corpus.py` and described in `bench/README.md`;
+The corpus is fetched by `bench/fetch.sh` and described in `bench/README.md`;
 every figure below is produced by an example in `rust/`, which encodes the
 corpus and decodes it again.
 
@@ -1280,7 +1280,8 @@ catalogue, two medical images, a chemical database, a dictionary.
 
 The **short** group is different in kind: 55 field-level samples under 200
 bytes each — identifiers, digests, tokens, timestamps, one record of JSON —
-authored in `bench/wire_samples.py` from invented values and needing no
+authored in binary2textbench's `corpus/wire_samples.py` from invented values
+and needing no
 download. It exists because neither of the other two contains a hex dump, a
 column of digits or a base64 blob, which is exactly what Section 9 is for, and
 because three characters of segment overhead are invisible at a megabyte and
@@ -2024,8 +2025,9 @@ constraining the compressor for.
 
 Everything above measures this format against itself. This section measures it
 against the codec it is derived from, with both implementations built from
-source and run in the same process under the same timing loop —
-`rust/examples/headtohead.rs`. Both are Rust, compiled by the same compiler at
+source and run in the same process under the same timing loop — see
+[binary2textbench](https://github.com/keywan-ghadami/binary2textbench), which
+does that for six encodings. Both are Rust, compiled by the same compiler at
 the same optimisation level, on the same bytes, so what is compared is two
 encodings rather than two languages.
 
@@ -2130,7 +2132,8 @@ forbids:
 | 1 | 0.37420 | 0.37415 | −0.01 % | 0.37992 |
 | 3 | 0.34378 | 0.34364 | −0.04 % | 0.34897 |
 
-`rust/examples/scanframe.rs`. The gain is entirely at the negative levels and
+`rust/examples/scanframe.rs` measures the first three columns; the pipeline
+column is binary2textbench's. The gain is entirely at the negative levels and
 it does not close the gap to the pipeline even there — 0.50808 against 0.50479.
 
 ### 17.23 What the second length field costs, and what it buys

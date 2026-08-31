@@ -8,11 +8,11 @@ import { fileURLToPath } from 'node:url';
 
 export const BENCH_DIR = dirname(fileURLToPath(import.meta.url));
 // The corpus itself did not move into the history directory: it is fetched by
-// bench/corpus.py at the repository root and shared with the current version.
+// bench/fetch.sh at the repository root and shared with the current version.
 export const CORPUS_DIR = join(BENCH_DIR, '..', '..', '..', 'bench', 'corpus');
 
 // The benchmark corpus is the one base85n publishes its numbers on: 13 real
-// files, 6.52 MB, fetched by bench/corpus.py from pinned upstream archives.
+// files, 6.52 MB, fetched by bench/fetch.sh from pinned upstream archives.
 // Using it unchanged is what makes the comparison in RESULTS.md a comparison.
 export const CATEGORY = {
   'sql-wasm.wasm': 'binary',
@@ -36,7 +36,7 @@ export const TEXTUAL = new Set(['json', 'code', 'spec', 'prose']);
 export function loadCorpus() {
   if (!existsSync(CORPUS_DIR)) {
     throw new Error(
-      `corpus missing -- run: python3 ${'bench/corpus.py'}`,
+      `corpus missing -- run: bench/fetch.sh`,
     );
   }
   const names = readdirSync(CORPUS_DIR).filter((n) => CATEGORY[n]);

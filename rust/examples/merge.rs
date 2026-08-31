@@ -53,7 +53,7 @@ fn segment(n: usize) -> usize {
 
 fn main() {
     let mut short: Vec<Vec<u8>> = std::fs::read_dir("bench/corpus/short")
-        .expect("run python3 bench/corpus.py --short")
+        .expect("run bench/fetch.sh")
         .filter_map(|e| e.ok())
         .map(|e| std::fs::read(e.path()).unwrap())
         .collect();

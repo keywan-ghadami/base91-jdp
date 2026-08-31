@@ -4,7 +4,7 @@
 
 """Training corpus for the donor-profile derivation (tools/deriveprofiles.js).
 
-Disjoint from the benchmark corpus of bench/corpus.py: no archive, no file
+Disjoint from the benchmark corpus of binary2textbench: no archive, no file
 and no upstream project is shared between the two, so the profile table in
 the specification is not fitted to the files it is later measured on.
 

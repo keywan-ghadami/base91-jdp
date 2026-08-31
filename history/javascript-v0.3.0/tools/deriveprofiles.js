@@ -24,7 +24,10 @@ import { join } from 'node:path';
 import { makeCodec, ALPHABET, R_LEN } from '../src/codec.js';
 import { BENCH_DIR } from '../bench/lib.js';
 
-const TRAIN_DIR = join(BENCH_DIR, 'train');
+// Like CORPUS_DIR, the training data stays at the repository root: it is
+// written by tools/traincorpus.py, which derives a table the current
+// specification still carries.
+const TRAIN_DIR = join(BENCH_DIR, '..', '..', '..', 'bench', 'train');
 const WANT = Number(process.argv[2] ?? 32);
 const POOL_SIZE = 20;
 

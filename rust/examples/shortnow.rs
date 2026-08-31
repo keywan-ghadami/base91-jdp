@@ -4,7 +4,7 @@
 
 fn main() {
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir("bench/corpus/short")
-        .expect("run python3 bench/corpus.py --short")
+        .expect("run bench/fetch.sh")
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .collect();

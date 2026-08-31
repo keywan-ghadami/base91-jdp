@@ -21,7 +21,7 @@ fn base64_len(n: usize) -> usize {
 fn main() {
     let dir = std::env::args().nth(1).unwrap_or("bench/corpus/short".into());
     let mut files: Vec<_> = fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("{dir}: {e} -- run python3 bench/corpus.py --short"))
+        .unwrap_or_else(|e| panic!("{dir}: {e} -- run bench/fetch.sh"))
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.is_file())
