@@ -1,6 +1,6 @@
 # Project website
 
-The site published at <https://keywan-ghadami.github.io/Base91z/> is
+The site published at <https://keywan-ghadami.github.io/base91z/> is
 generated from this directory by [`build.py`](build.py) and deployed by
 [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) on every push to
 `main` that touches the site, the specification, the benchmark report, the

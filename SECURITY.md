@@ -39,6 +39,25 @@ The **encoder** is a smaller surface but not a zero one: it writes into buffers
 it has sized itself, through bulk paths that carry no per-byte bounds check.
 That is what Miri and the sanitizers below are pointed at.
 
+## One property this format does not have
+
+**The encoded text is not a stable identity for the payload.** The compression
+level is a parameter, so the same bytes encode to different strings at
+different levels — and the zstd build underneath, and the set of classes an
+encoder implements, can move the text too. Specification Section 11.3 makes the
+encoder's own choices canonical, which is a narrower promise than it sounds:
+two conforming encoders at the same level with the same compressor agree
+character for character, and nothing guarantees more than that.
+
+So a protocol that **signs, hashes or compares the encoded string** — a
+signature over the text, a content-addressed key, a dedup key, an ETag — is
+building on something this format does not promise, and will break on a level
+change, a dependency bump, or a second implementation. Sign the payload:
+`decode(encode(x)) == x` is the guarantee, and the bytes either side of it are
+where an identity belongs. Base64 and Base85N have no parameter and are stable
+this way; where the encoded form itself must be reproducible, they are the
+better choice and this is not a gap to work around.
+
 ## What is run against it
 
 Everything here runs in CI on every push, except where it says otherwise.

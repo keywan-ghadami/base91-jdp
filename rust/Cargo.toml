@@ -12,7 +12,7 @@ repository = "https://github.com/keywan-ghadami/base91z"
 keywords = ["base91", "base64", "encoding", "binary-to-text", "json"]
 categories = ["encoding", "text-processing"]
 readme = "README.md"
-homepage = "https://keywan-ghadami.github.io/Base91z/"
+homepage = "https://keywan-ghadami.github.io/base91z/"
 documentation = "https://docs.rs/base91z"
 # The fuzz package is its own workspace with a path dependency back on this
 # one, so it cannot build from a published tarball; it is developed here and
@@ -81,6 +81,10 @@ required-features = ["zstd"]
 
 [[example]]
 name = "frames"
+required-features = ["zstd"]
+
+[[example]]
+name = "levels"
 required-features = ["zstd"]
 
 [[example]]
