@@ -302,8 +302,8 @@ codecs.)
 | core corpus | size | encode | decode |
 |---|---|---|---|
 | Base85N 0.5.1 | 1.00698 | 486 MB/s | 1 331 MB/s |
-| **this crate, zstd 1** | **0.37431** | 403 MB/s | 584 MB/s |
-| **this crate, zstd −5** | **0.52271** | **502 MB/s** | 398 MB/s |
+| **this crate, zstd 1** | **0.37432** | 403 MB/s | 584 MB/s |
+| **this crate, zstd −5** | **0.52273** | **502 MB/s** | 398 MB/s |
 
 Level 1 is the recommendation: 2.7× smaller at 83 % of the encode throughput.
 Level −5 is for throughput above all — half the size *and* faster, 502 against
@@ -315,11 +315,11 @@ this format chunks at a mebibyte:
 
 | level | this crate | zstd → Base85N | |
 |---|---|---|---|
-| −5 | 0.52271 | 0.50479 | +3.55 % |
-| −1 | 0.43651 | 0.42977 | +1.57 % |
-| **1** | **0.37431** | 0.37992 | **−1.48 %** |
-| 3 | **0.34443** | 0.34897 | **−1.30 %** |
-| 9 | **0.31449** | 0.31830 | **−1.20 %** |
+| −5 | 0.52273 | 0.50479 | +3.55 % |
+| −1 | 0.43652 | 0.42977 | +1.57 % |
+| **1** | **0.37432** | 0.37992 | **−1.47 %** |
+| 3 | **0.34444** | 0.34897 | **−1.30 %** |
+| 9 | **0.31451** | 0.31830 | **−1.19 %** |
 
 Ahead from level 1 up, behind below it, and specification section 10.1 now says
 why: zstd's negative levels leave literals uncoded, so source text survives into

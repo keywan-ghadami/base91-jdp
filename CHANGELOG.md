@@ -65,8 +65,8 @@ Measured head to head against Base85N 0.5.1, each codec as it ships — this one
 with its compressor, which is part of the format, and Base85N without one,
 because it has none. Both built from source and run in one process under one
 timing loop, so the comparison is of two encodings rather than two languages.
-On the core corpus: Base85N 1.00698 at 486 MB/s, this format 0.37431 at 403
-MB/s at level 1 and 0.52271 at 502 MB/s at level −5 — half the size and faster
+On the core corpus: Base85N 1.00698 at 486 MB/s, this format 0.37432 at 403
+MB/s at level 1 and 0.52273 at 502 MB/s at level −5 — half the size and faster
 at the same time, at the setting a caller picks for throughput. Level 1 is the
 recommendation, 2.7 times smaller at 83 % of the throughput. It decodes two to
 three times slower, which is what 91 characters cost a byte-oriented decoder

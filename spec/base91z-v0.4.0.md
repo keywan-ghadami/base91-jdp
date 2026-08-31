@@ -2040,8 +2040,8 @@ switches this format's compressor off, because a caller does not have one.
 | | size | encode | decode |
 |---|---|---|---|
 | Base85N 0.5.1 | 1.00698 | 486 MB/s | 1 331 MB/s |
-| **Base91z, zstd 1** | **0.37431** | 403 MB/s | 584 MB/s |
-| **Base91z, zstd −5** | **0.52271** | **502 MB/s** | 398 MB/s |
+| **Base91z, zstd 1** | **0.37432** | 403 MB/s | 584 MB/s |
+| **Base91z, zstd −5** | **0.52273** | **502 MB/s** | 398 MB/s |
 
 **Level 1 is the recommendation: 2.7 times smaller at 83 % of the encode
 throughput.** Level −5 is for a caller who wants encode throughput above
@@ -2064,12 +2064,12 @@ pays 0.2 % for it (Section 17.9).
 
 | level | Base91z | encode | decode | zstd → Base85N | |
 |---|---|---|---|---|---|
-| −5 | 0.52271 | 502 MB/s | 403 MB/s | 0.50479 | +3.55 % |
-| −3 | 0.48072 | 474 MB/s | 422 MB/s | 0.46976 | +2.33 % |
-| −1 | 0.43651 | 437 MB/s | 437 MB/s | 0.42977 | +1.57 % |
-| **1** | **0.37431** | 397 MB/s | 571 MB/s | 0.37992 | **−1.48 %** |
-| 3 | **0.34443** | 272 MB/s | 475 MB/s | 0.34897 | **−1.30 %** |
-| 9 | **0.31449** | 63 MB/s | 648 MB/s | 0.31830 | **−1.20 %** |
+| −5 | 0.52273 | 502 MB/s | 403 MB/s | 0.50479 | +3.55 % |
+| −3 | 0.48073 | 474 MB/s | 422 MB/s | 0.46976 | +2.34 % |
+| −1 | 0.43652 | 437 MB/s | 437 MB/s | 0.42977 | +1.57 % |
+| **1** | **0.37432** | 397 MB/s | 571 MB/s | 0.37992 | **−1.47 %** |
+| 3 | **0.34444** | 272 MB/s | 475 MB/s | 0.34897 | **−1.30 %** |
+| 9 | **0.31451** | 63 MB/s | 648 MB/s | 0.31830 | **−1.19 %** |
 
 **Ahead from level 1 upward, behind below it**, and Section 10.1 says why: the
 negative levels leave literals uncoded, Base85N's passthrough reaches them and

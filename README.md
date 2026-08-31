@@ -68,11 +68,12 @@ Base85N deliberately does not.
 
 ## Against the alternatives
 
-Thirteen files, 6.52 MB. Both codecs built from source and run in one process
-under one timing loop, so what is compared is encodings and not languages
-([`rust/examples/against.rs`](rust/examples/against.rs)). The second column is
-what the string costs **inside a JSON document**, which is where these strings
-go.
+Thirteen files, 6.52 MB. Every codec is built from source and run in one
+process under one timing loop, so what is compared is encodings and not
+languages — measured by [binary2textbench](https://github.com/keywan-ghadami/binary2textbench), which does this for six
+encodings. The second column is what the string costs **inside a JSON
+document**, which is where these strings go. Base91z's own figures are
+reproducible here with `cargo run --release --example compresscorpus`.
 
 ### No compressor
 
@@ -94,13 +95,13 @@ build. Base91z has one, and it is the same zstd.
 | deflate → basE91 | 0.33323 | 0.33598 | 27 MB/s |
 | zstd 1 → basE91 | 0.37383 | 0.37706 | 315 MB/s |
 | zstd 1 → Base85N | 0.37992 | same | 364 MB/s |
-| **Base91z**, zstd 1 | **0.37431** | same | **388 MB/s** |
+| **Base91z**, zstd 1 | **0.37432** | same | **388 MB/s** |
 | zstd 3 → basE91 | 0.34344 | 0.34634 | 220 MB/s |
 | zstd 3 → Base85N | 0.34897 | same | 250 MB/s |
-| **Base91z**, zstd 3 | **0.34443** | same | **290 MB/s** |
+| **Base91z**, zstd 3 | **0.34444** | same | **290 MB/s** |
 | zstd 9 → basE91 | 0.31325 | 0.31595 | 62 MB/s |
 | zstd 9 → Base85N | 0.31830 | same | 62 MB/s |
-| **Base91z**, zstd 9 | **0.31449** | same | **64 MB/s** |
+| **Base91z**, zstd 9 | **0.31451** | same | **64 MB/s** |
 
 **Smallest in the JSON column at every compressor setting, and fastest at each
 one.** Classic basE91 is very slightly smaller as a raw string — its symbol
@@ -124,7 +125,7 @@ than eighty-five.
 
 | | |
 |---|---|
-| **[basE91](http://base91.sourceforge.net/)** (Henke, 2005) | What this is built on. Denser than Base64 and widely implemented, but its alphabet contains `"`, so its output has to be escaped inside a JSON string — the 1.21517 above becomes 1.23996. Reading and writing it is 30 lines either way, and [`rust/examples/against.rs`](rust/examples/against.rs) contains a complete encoder if you want one to read. |
+| **[basE91](http://base91.sourceforge.net/)** (Henke, 2005) | What this is built on. Denser than Base64 and widely implemented, but its alphabet contains `"`, so its output has to be escaped inside a JSON string — the 1.21517 above becomes 1.23996. Reading and writing it is 30 lines either way, and [binary2textbench](https://github.com/keywan-ghadami/binary2textbench/blob/main/runner-rust/src/codecs.rs) contains a complete encoder if you want one to read. |
 | **[Base94](https://vorakl.com/articles/base94/)** | The whole printable-ASCII alphabet, and therefore the densest ASCII encoding possible at 1.221 characters a byte. It buys that by treating the file as one big number, which is quadratic: usable for tens of kilobytes, not for a megabyte. It also contains `"`, `\`, `<`, `&` and `,`, so it is safe in nothing. |
 | **[Base122](https://blog.kevinalbs.com/base122)** (Albertson) | Not ASCII: it encodes into UTF-8 and is about 14 % smaller than Base64 *as bytes*. Its author does not recommend it for web pages, and control characters in it do not survive copy-paste. Where a length check, a regular expression or a terminal is in the path, a non-ASCII string is a different kind of risk from a large one. |
 | **[Ascii85](https://en.wikipedia.org/wiki/Ascii85)** | 1.25 characters a byte and long deployed in PostScript and PDF. Its alphabet contains `"` and `\`. |
@@ -178,5 +179,6 @@ Mozilla Public License 2.0. See [LICENSE](LICENSE).
 ---
 
 *Parts of this repository were drafted with AI assistance and then verified
-against measurements. Every number here comes from a run of the benchmarks in
-this repository.*
+against measurements. Every number here comes from a run: this format's own
+figures from the examples in [`rust/`](rust/README.md), the comparisons against
+other codecs from [binary2textbench](https://github.com/keywan-ghadami/binary2textbench).*
