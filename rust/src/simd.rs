@@ -53,7 +53,7 @@ use std::simd::cmp::SimdPartialEq;
 use std::simd::u8x32;
 
 
-use crate::tables::{DONOR_RANK, NUM_PROFILES, R_INDEX, VALUE_OF};
+use crate::tables::{tuning, NUM_PROFILES, R_INDEX, VALUE_OF};
 
 /// How many bytes one vector step settles.
 pub const LANES: usize = 32;
@@ -140,7 +140,7 @@ impl SkipSet {
                 let mut ok = true;
                 let mut p = 0;
                 while p < NUM_PROFILES {
-                    let rank = DONOR_RANK[p][b as usize];
+                    let rank = tuning::donor_rank()[p][b as usize];
                     if rank < min_rank[p] || rank < k {
                         ok = false;
                         break;

@@ -4,7 +4,7 @@
 |---|---|
 | Version | 0.4.0 |
 | Status | Draft |
-| Date | 2026-08-27 |
+| Date | 2026-08-31 |
 | License | MPL-2.0 |
 | Supersedes | 0.3.0 |
 
@@ -463,14 +463,13 @@ first `k` entries have any effect on a segment with `k` active substitutions.
 
 | ID | Rank → 0 1 2 3 4 5 6 7 |
 |---|---|
-| 0 | `$` `~` `^` `%` `#` `@` `>` `<` |
-| 1 | `@` `&` `!` `~` `%` `<` `$` `^` |
-| 2 | `%` `@` `#` `<` `~` `>` `$` `^` |
-| 3 | `*` `$` `?` `&` `^` `\|` `~` `%` |
+| 0 | `~` `^` `$` `%` `@` `#` `<` `!` |
+| 1 | `@` `#` `%` `~` `>` `<` `^` `$` |
+| 2 | `<` `>` `&` `@` `!` `^` `~` `%` |
+| 3 | `*` `@` `~` `^` `>` `%` `$` `#` |
 
-With NUL in the R-Set, `k` can reach eight and the eighth rank is reachable for
-the first time. Section 17.5 says what that means for the derivation, which has
-not been re-run.
+With NUL in the R-Set, `k` can reach eight, so the eighth rank is reachable and
+is fitted here for the first time. Section 17.5 has the derivation.
 
 ### 8.3 Substitution
 
@@ -1256,9 +1255,7 @@ corpus and decodes it again.
 > **What is and is not measured.** Everything below is the prototype in `rust/`
 > encoding the corpus and decoding it again, except: Section 17.2, which is the
 > 0.3.0 JavaScript codec; the ratios in Section 9, which are arithmetic; and
-> the packed classes, which neither corpus exercises. The donor profiles are
-> still 0.3.0's and were
-> derived for an R-Set that held `-` rather than NUL (Section 17.5). Neither
+> the packed classes, which neither corpus exercises. Neither
 > corpus contains a hex dump, a column of digits or a base64 blob, so nothing
 > here measures the packed classes either (Section 17.15).
 
@@ -1386,20 +1383,28 @@ does on top of that.
 
 ### 17.5 The donor profiles
 
-Derived greedily by `tools/deriveprofiles.js` on the training corpus:
+Derived greedily by `rust/examples/deriveprofiles.rs` on the 2.37 MB training
+corpus of `tools/traincorpus.py`, which shares no file and no upstream project
+with either benchmark corpus:
 
-| profiles | 1 | 2 | 3 | **4** | 5 | 6 |
-|---|---|---|---|---|---|---|
-| gain | — | 0.245 % | 0.067 % | **0.050 %** | 0.013 % | 0.019 % |
+| profiles | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| gain | — | 0.141 % | 0.023 % | 0.009 % |
 
-Four is where the curve flattens. Letters and digits are kept out of the
-candidate pool on principle: a rare capital is rare across all text and common in
-the one file that uses it, so it breaks segments in bursts.
+Letters and digits are kept out of the candidate pool on principle: a rare
+capital is rare across all text and common in the one file that uses it, so it
+breaks segments in bursts.
 
-These were derived with an eight-member R-Set that contained `-`. The membership
-changed in 0.4.0 — `-` out, NUL in — so the derivation MUST be re-run before
-this version leaves draft. The eighth rank is now reachable for the first time
-and has never been fitted.
+**The derivation has been re-run for this version's R-Set, and the answer is
+that it barely matters.** The table of 0.4.0's earlier drafts was fitted with an
+eight-member R-Set containing `-`; the membership changed — `-` out, NUL in —
+and the eighth rank became reachable for the first time. Re-deriving against the
+R-Set actually in use produces a different table, worth **0.0225 % on the corpus
+it is fitted on and nothing measurable on either corpus it is not**: the core
+corpus stays at 0.98354 and the short group at 0.92524, unchanged to every digit
+reported here. The table in Section 8.2 is the re-derived one, so the constants
+and the R-Set now agree; what the exercise establishes is that the choice of
+donors, past the first, is not where this format's density comes from.
 
 ### 17.6 NUL in the R-Set, and why there is only one R-Set
 
@@ -2504,9 +2509,9 @@ an hour rather than a week, these are where it is best spent:
 * the never-worse-than-block-mode guarantee in Section 11.2;
 * the allocation bounds in Section 16, runs included and not only frames.
 
-Two things we already know are open, and would rather hear about early than
-late. The measurement caveat at the head of Section 17 is a release blocker
-rather than a footnote: the donor profiles must be re-derived for the changed R-Set
-(Section 17.5), and neither corpus can say anything about the packed classes
-(Section 17.15). And no implementation has yet encoded a byte against this
-document, so every claim in it is an argument rather than a result.
+One thing we already know is open, and would rather hear about early than late:
+neither corpus can say anything about the packed classes (Section 17.15), so
+what Section 9 costs on real traffic is still an argument. The donor profiles
+were the other one and are no longer — they have been re-derived for this
+version's R-Set (Section 17.5), which moved the table and moved no measurement
+outside the corpus it was fitted on.

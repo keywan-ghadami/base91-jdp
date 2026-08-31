@@ -69,7 +69,7 @@ pub const MIN_NONZERO_RUN_IN_SEGMENT: usize = 8;
 /// A prototype exists to find out what they should be; the constants are what
 /// it found.
 pub mod tuning {
-    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering::Relaxed};
 
     pub static BINARY_RUN: AtomicUsize = AtomicUsize::new(super::MIN_BINARY_RUN);
     pub static ZERO_RUN: AtomicUsize = AtomicUsize::new(super::MIN_RUN_IN_SEGMENT);
@@ -98,6 +98,46 @@ pub mod tuning {
     #[inline]
     pub fn packed_mask() -> u16 {
         PACKED_MASK.load(Relaxed) as u16
+    }
+
+    /// The donor profile table in force, and its rank index.
+    ///
+    /// Section 8.2's table is normative, so this is not a knob a caller has --
+    /// it exists because `examples/deriveprofiles.rs` has to encode the
+    /// training corpus under six hundred candidate tables to derive the one
+    /// the specification should carry, and Section 17.5 requires that
+    /// derivation to be re-run for the R-Set 0.4.0 changed.
+    ///
+    /// Both are read through a pointer rather than behind a flag, so the scan
+    /// indexes an array exactly as it did before this existed and the default
+    /// path costs nothing. The pointers are null until something overrides
+    /// them, which is what selects the compile-time tables.
+    pub(crate) static PROFILES_PTR: AtomicPtr<[[u8; 8]; super::NUM_PROFILES]> =
+        AtomicPtr::new(std::ptr::null_mut());
+    pub(crate) static RANK_PTR: AtomicPtr<[[u8; 256]; super::NUM_PROFILES]> =
+        AtomicPtr::new(std::ptr::null_mut());
+
+    #[inline]
+    pub fn profiles() -> &'static [[u8; 8]; super::NUM_PROFILES] {
+        let p = PROFILES_PTR.load(Relaxed);
+        // SAFETY: null, or a leaked Box from `set_profiles`, which never frees.
+        if p.is_null() { &super::PROFILES } else { unsafe { &*p } }
+    }
+
+    #[inline]
+    pub fn donor_rank() -> &'static [[u8; 256]; super::NUM_PROFILES] {
+        let p = RANK_PTR.load(Relaxed);
+        // SAFETY: as above.
+        if p.is_null() { &super::DONOR_RANK } else { unsafe { &*p } }
+    }
+
+    /// Replace the table for the rest of the process. Deliberately leaks: a
+    /// derivation run sets a few hundred tables of forty bytes each, and a
+    /// leak is the whole of what makes the readers above safe without a lock.
+    pub fn set_profiles(table: [[u8; 8]; super::NUM_PROFILES]) {
+        let ranks = super::donor_rank_of(&table);
+        PROFILES_PTR.store(Box::leak(Box::new(table)), Relaxed);
+        RANK_PTR.store(Box::leak(Box::new(ranks)), Relaxed);
     }
 
     /// Whether the encoder takes the per-window block-mode decision at all.
@@ -154,10 +194,10 @@ pub const R_CHARS: [u8; R_LEN] = [0x20, 0x22, 0x0A, 0x5C, 0x0D, 0x27, 0x09, 0x00
 
 /// Donor profiles, specification section 8.2. Eight ranks each.
 pub const PROFILES: [[u8; 8]; 4] = [
-    *b"$~^%#@><",
-    *b"@&!~%<$^",
-    *b"%@#<~>$^",
-    *b"*$?&^|~%",
+    *b"~^$%@#<!",
+    *b"@#%~><^$",
+    *b"<>&@!^~%",
+    *b"*@~^>%$#",
 ];
 pub const NUM_PROFILES: usize = PROFILES.len();
 
@@ -280,19 +320,23 @@ pub static R_INDEX: [u8; 256] = {
     t
 };
 
-/// Per profile, the rank a byte holds as a donor, or 8 where it is not one.
-/// The scan keeps the lowest rank any literal has held, per profile, and a
-/// profile stays viable exactly while that is at least `k`.
-pub static DONOR_RANK: [[u8; 256]; NUM_PROFILES] = {
+/// Build the rank index for a profile table: per profile, the rank a byte
+/// holds as a donor, or 8 where it is not one.
+pub const fn donor_rank_of(profiles: &[[u8; 8]; NUM_PROFILES]) -> [[u8; 256]; NUM_PROFILES] {
     let mut all = [[8u8; 256]; NUM_PROFILES];
     let mut p = 0;
     while p < NUM_PROFILES {
         let mut r = 0;
         while r < 8 {
-            all[p][PROFILES[p][r] as usize] = r as u8;
+            all[p][profiles[p][r] as usize] = r as u8;
             r += 1;
         }
         p += 1;
     }
     all
-};
+}
+
+/// Per profile, the rank a byte holds as a donor, or 8 where it is not one.
+/// The scan keeps the lowest rank any literal has held, per profile, and a
+/// profile stays viable exactly while that is at least `k`.
+pub static DONOR_RANK: [[u8; 256]; NUM_PROFILES] = donor_rank_of(&PROFILES);

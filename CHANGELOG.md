@@ -99,6 +99,26 @@ kept under `history/javascript-v0.3.0/`, where it is no longer published to npm
 and no longer maintained. The repository root no longer ships a library: what
 is at the root is the specification, the implementation and the tooling.
 
+**The donor profiles were re-derived for the R-Set actually in use.** The table
+of Section 8.2 had been fitted with an eight-member R-Set containing `-`;
+0.4.0 took `-` out and put NUL in, which made the eighth rank reachable for the
+first time and left the constants fitted against a set the format no longer has.
+Section 17.5 called re-running it a release blocker. It has been re-run, by
+`rust/examples/deriveprofiles.rs`, and the table in Section 8.2 is the result.
+
+What it is worth is the finding: **0.0225 % on the corpus it is fitted on, and
+nothing on either corpus it is not.** The core corpus stays at 0.98354, the
+short group at 0.92524 and every compressed level is unchanged to five decimals.
+The donors past the first are not where this format's density comes from. The
+table still changes, so a 0.4.0 stream from before this entry and one from after
+do not agree on passthrough segments -- the format is a draft and has had no
+users, so that is a note rather than a break.
+
+`tables::tuning` grew the hook the derivation needed, which is a pointer to the
+table in force rather than a flag the scan tests: the default path indexes an
+array exactly as it did before, and the corpus and short examples confirm it
+byte for byte.
+
 **Comparing against the other codecs moved out.** Sizes and throughput against
 Base64, classic basE91, Ascii85, Base85N and Base94Max are measured in
 [binary2textbench](https://github.com/keywan-ghadami/binary2textbench), which
@@ -118,10 +138,12 @@ stays and keeps its own measurement; only its Base85N reference column went.
 **The v0.3.0 JavaScript tooling followed the v0.3.0 JavaScript.**
 `deriveprofiles.js`, `donorstats.js` and `lz4fixtures.py` import `src/codec.js`
 and `bench/lib.js`, which moved under `history/javascript-v0.3.0/` — so they had
-stopped resolving. They now sit beside what they import. `tools/traincorpus.py`
-stays at the root: the training corpus is deliberately disjoint from the
-benchmark corpus, which is a claim the current specification's Section 4.2
-still rests on.
+stopped resolving. They now sit beside what they import, where they are the
+record of how 0.3.0's numbers were made rather than tools this version runs:
+the profile derivation is `rust/examples/deriveprofiles.rs` now, against this
+version's R-Set. `tools/traincorpus.py` stays at the root, because it feeds
+that: the training corpus is deliberately disjoint from the benchmark corpus,
+so the table in Section 8.2 is not fitted to the files it is measured on.
 
 Everything below this line is the history of v0.3.0 and earlier.
 

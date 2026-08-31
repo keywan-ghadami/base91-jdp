@@ -27,6 +27,7 @@ classes 17 and 20 with `Code::UnknownClass`, as section 15.5 requires.
 cargo test                                    # round trip, canonicity, adversarial decode
 cargo run --release --example corpus -- ../bench/corpus
 cargo run --release --example sweep  -- ../bench/corpus
+cargo run --release --example deriveprofiles  # the donor table of section 8.2
 cargo +nightly test --features simd           # the same, with the vector paths on
 ```
 

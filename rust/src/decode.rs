@@ -536,7 +536,7 @@ impl<'a> Decoder<'a> {
                     let mut rank = 0usize;
                     for (j, &r) in R_CHARS.iter().enumerate() {
                         if mask & (1 << j) != 0 {
-                            let d = PROFILES[profile][rank];
+                            let d = tuning::profiles()[profile][rank];
                             rank += 1;
                             saved[n_saved] = (d, self.xlat[d as usize]);
                             n_saved += 1;

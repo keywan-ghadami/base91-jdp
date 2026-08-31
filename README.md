@@ -175,9 +175,11 @@ to the serial one. What it has not had is a second reader: Section 20 of the
 specification says which parts would most repay one, and Section 17 says which
 numbers are measured and which are still arguments.
 
-Three things are open and named as open: the donor profiles were derived for a
-different R-Set than the one in use, the candidate ranking is greedy and a JWT
-shows it, and there is no C implementation.
+Two things are open and named as open: the candidate ranking is greedy and a
+JWT shows it, and there is no C implementation. A third was closed here — the
+donor profiles had been derived for a different R-Set than the one in use, and
+re-deriving them for the right one moved the table and moved no measurement
+outside the corpus it was fitted on.
 
 Earlier drafts of this format were called base91-jdp, and v0.3.0 of it was a
 different design that does not interoperate with this one. It is kept in

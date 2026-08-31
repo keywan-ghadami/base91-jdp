@@ -469,6 +469,9 @@ fn scan_passthrough(data: &[u8], at: usize, overhead: usize) -> Option<Candidate
     let mut k: u8 = 0;
     // Per profile, the lowest donor rank any literal in the segment holds.
     let mut min_rank = [8u8; NUM_PROFILES];
+    // One pointer load for the whole scan; the loop below indexes it exactly
+    // as it indexed the compile-time table.
+    let donor_rank = tuning::donor_rank();
     let mut j = at;
     let mut profile = 0usize;
 
@@ -493,7 +496,7 @@ fn scan_passthrough(data: &[u8], at: usize, overhead: usize) -> Option<Candidate
             } else if VALUE_OF[byte as usize] != 0xFF {
                 let mut m = min_rank;
                 for p in 0..NUM_PROFILES {
-                    let rank = DONOR_RANK[p][byte as usize];
+                    let rank = donor_rank[p][byte as usize];
                     if rank < m[p] {
                         m[p] = rank;
                     }
@@ -587,7 +590,7 @@ pub fn donor_table(mask: u8, profile: usize) -> [u8; R_LEN] {
     let mut rank = 0usize;
     for (j, slot) in t.iter_mut().enumerate() {
         if mask & (1 << j) != 0 {
-            *slot = PROFILES[profile][rank];
+            *slot = tuning::profiles()[profile][rank];
             rank += 1;
         }
     }
