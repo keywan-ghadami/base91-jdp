@@ -245,6 +245,49 @@ and a lint that reports without failing is a lint nobody reads.
   bug that reached the published site, including the `tel:` link and the footer
   that named a repository after it had been renamed.
 
+**A C ABI, and a Python module.** `rust/src/ffi.rs` exports the encoder and
+decoder behind the C calling convention, declared in `rust/include/base91z.h`,
+and the crate now builds a `cdylib` and a `staticlib` beside the `rlib`. There
+is deliberately **no second implementation in C**: the point of the ABI is that
+a C, C++, Go, Zig or Ruby caller gets the memory-safe one. Everything below the
+entry points is safe Rust, `base91z_decode_bounded` puts the ceiling of Section
+16 within reach of a caller who has never read Rust, and the boundary refuses a
+null out-parameter rather than dereferencing it. `python/` is a PyO3 module over
+the same crate -- `encode`, `encode_plain`, `decode` with `max_bytes`, a
+`Base91zDecodeError` carrying the specification's condition name and the offset,
+type stubs and the PEP 561 marker, one abi3 wheel for every CPython from 3.9 up.
+
+Both are tested rather than asserted. `rust/tests/ffi.rs` calls the C entry
+points as C calls them and reads `include/base91z.h` to check that every status
+number matches the Rust enum -- the one disagreement a C caller cannot detect,
+since it compiles and links either way. `examples/c/demo.c` is a real C program
+CI builds against both the shared object and the static archive. The Python
+tests run against an *installed wheel*, so the stubs and the marker they check
+are the ones that ship.
+
+**It is not called a prototype any more.** Every class is implemented and round
+trips, the parallel encoder is byte-identical to the serial one, the decoder has
+an adversarial suite and five fuzz targets, and the same code is now reachable
+from three languages. What is still open is said in the words that fit it: the
+API is not settled and nothing is published, to crates.io or to PyPI. The
+specification's Section 17 calls the thing it measures "the implementation"
+rather than "the prototype", which changes no measurement.
+
+Two things found while building this:
+
+* `parallel.rs` said its output was byte-identical to `encode`. It is
+  byte-identical to `encode_plain` -- the parallel encoder is the container's,
+  and compression is not split across threads, because a zstd frame is a unit
+  and a chunk boundary is not a place to cut one. The claim dated from before
+  `encode` became the compressing entry point. The Python binding exposes the
+  thread count on `encode_plain` for the same reason.
+* The Python crate needed the `zstd` feature *forwarded* from its own
+  manifest, exactly as the fuzz targets did: `cfg!(feature = "zstd")` inside
+  the binding reads the binding's features, not the crate's, so
+  `HAS_COMPRESSOR` would have reported false while everything built. It is
+  forwarded, and `test_agreement.py` checks the flag against behaviour rather
+  than trusting it.
+
 Everything below this line is the history of v0.3.0 and earlier.
 
 ---

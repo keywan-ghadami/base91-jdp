@@ -20,9 +20,12 @@
 //! splices a worker's output only where its assumption provably held, and
 //! re-encodes the chunk sequentially where it did not.
 //!
-//! The result is byte-identical to [`crate::encode`] whatever the thread count
-//! and whatever the chunking, because a splice happens only when the two paths
-//! were in the same state. [`ParallelStats`] reports how often that was true,
+//! The result is byte-identical to [`crate::encode_plain`] whatever the thread
+//! count and whatever the chunking, because a splice happens only when the two
+//! paths were in the same state. **Plain, not [`crate::encode`]**: this is the
+//! container's encoder, and compression is not split across threads -- a zstd
+//! frame is a unit, and a chunk boundary is not a place a frame may be cut.
+//! The entry point that compresses is `encode`, on one thread. [`ParallelStats`] reports how often that was true,
 //! which is the number that says whether the arrangement is worth anything on
 //! a given kind of input.
 
@@ -48,7 +51,9 @@ pub struct ParallelStats {
     pub rejoined: usize,
 }
 
-/// Encode on up to `threads` threads. Identical output to [`encode`].
+/// Encode on up to `threads` threads. Identical output to [`encode_plain`],
+/// whatever the thread count -- this is the container's encoder, and it does
+/// not compress. See the module documentation.
 pub fn encode_parallel(data: &[u8], threads: usize) -> String {
     encode_parallel_stats(data, threads).0
 }

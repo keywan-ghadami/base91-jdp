@@ -1,0 +1,40 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+[package]
+name = "base91z-python"
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Python bindings for Base91z"
+license = "MPL-2.0"
+publish = false
+
+[lib]
+# Only a cdylib: nothing links this from Rust, and the encoder and decoder
+# themselves live in the `base91z` crate one directory up. The target is named
+# apart from that crate so the two do not collide in a shared build directory;
+# maturin installs the artefact under the `module-name` in pyproject.toml,
+# which is what Python imports.
+name = "base91z_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+base91z = { path = "../rust", default-features = false }
+# abi3-py39 builds one wheel that every CPython from 3.9 up can load, which is
+# what lets `requires-python = ">=3.9"` in pyproject.toml stay honest without a
+# wheel per interpreter version.
+pyo3 = { version = "0.23", features = ["abi3-py39"] }
+
+# Forwarded, not inherited. `cfg!(feature = "zstd")` in src/lib.rs is read
+# against *this* package's features, so without these the compressed classes
+# would compile out of the module and `HAS_COMPRESSOR` would report false while
+# the build still succeeded. The same mistake was live in the fuzz targets once.
+[features]
+default = ["zstd"]
+zstd = ["base91z/zstd"]
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -5,7 +5,7 @@ name = "base91z"
 version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
-description = "Base91z: basE91 on a JSON-safe alphabet, with typed segments. Prototype encoder and decoder for specification v0.4.0."
+description = "Base91z: a binary-to-text encoding for bytes inside text protocols, on an alphabet JSON never has to escape, with typed segments and zstd inside. Reference implementation of specification v0.4.0, with a C ABI."
 license = "MPL-2.0"
 authors = ["Keywan Ghadami"]
 repository = "https://github.com/keywan-ghadami/base91z"
@@ -14,11 +14,15 @@ categories = ["encoding", "text-processing"]
 readme = "README.md"
 homepage = "https://keywan-ghadami.github.io/base91z/"
 documentation = "https://docs.rs/base91z"
-# The fuzz package is its own workspace with a path dependency back on this
-# one, so it cannot build from a published tarball; it is developed here and
-# run from a checkout. `rust/tests/support/` stays in, because the adversarial
-# suite includes it.
-exclude = ["fuzz/"]
+# What goes in the published tarball, listed rather than excluded -- cargo
+# ignores `exclude` when both are given, and warns about it.
+#
+# `include/` is here because the C header is part of what this crate ships: a
+# caller linking the staticlib needs it, and `tests/ffi.rs` checks it against
+# `src/ffi.rs`. `tests/support/` is here because the adversarial suite includes
+# it. What is deliberately absent is `fuzz/`, which is its own workspace with a
+# path dependency back on this one and so cannot build from a tarball at all.
+include = ["src/**", "include/**", "examples/**", "tests/**", "README.md", "Cargo.toml"]
 
 # docs.rs builds on nightly, where `simd` would compile -- but the feature is
 # an acceleration that may never change a decision, so documenting it would
@@ -29,6 +33,10 @@ all-features = false
 [lib]
 name = "base91z"
 path = "src/lib.rs"
+# rlib for Rust callers; cdylib and staticlib for everyone else, through the C
+# ABI in src/ffi.rs and the header in include/base91z.h. The Python module in
+# ../python does not go through this -- it is PyO3 over the rlib.
+crate-type = ["rlib", "cdylib", "staticlib"]
 
 [features]
 default = ["zstd"]

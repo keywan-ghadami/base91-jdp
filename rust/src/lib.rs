@@ -16,8 +16,12 @@
 
 //! # Base91z
 //!
-//! A prototype encoder and decoder for **specification v0.4.0** -- basE91 on
-//! an alphabet JSON never has to escape, with typed segments.
+//! The reference implementation of **specification v0.4.0** -- basE91 on an
+//! alphabet JSON never has to escape, with typed segments and zstd inside.
+//!
+//! Rust callers use this crate directly; C and everything with a C FFI go
+//! through [`ffi`] and `include/base91z.h`; Python goes through the PyO3
+//! module in `../python`. All three are this code.
 //!
 //! ```
 //! let data = b"{\"user\":\"ada\",\"id\":42}";
@@ -25,14 +29,15 @@
 //! assert_eq!(base91z::decode(&text).unwrap(), data);
 //! ```
 //!
-//! **This is a prototype.** It implements every class of the specification --
-//! passthrough, the packed bases, the runs and chained gaps, and the
-//! compressed segment behind the default `zstd` feature -- with a decoder for
-//! each. What it exists to answer is whether the format encodes at the density
-//! the specification projects, and whether the parallel and vector paths the
-//! format was shaped for actually pay.
+//! It implements every class of the specification -- passthrough, the packed
+//! bases, the runs and chained gaps, and the compressed segment behind the
+//! default `zstd` feature -- with a decoder for each, and it is what Section 17
+//! of the specification is measured against.
+//!
+//! Not published to crates.io: the wire format is final, the API is not.
 
 pub mod error;
+pub mod ffi;
 pub mod tables;
 
 #[cfg(feature = "zstd")]
