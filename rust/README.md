@@ -1,4 +1,4 @@
-# Base91z, Rust prototype
+# Base91z, the reference implementation
 
 An encoder and decoder for **specification v0.4.0**, written to find out
 whether the format encodes at the density the specification projected, and
@@ -464,9 +464,12 @@ Every one of them has a test that fails without the fix.
 
 ## Status
 
-This is a prototype implementation of a final specification. The wire format
-will not change under it — v0.4.0 is fixed, and a format change is a new version
-— but the crate is a prototype: nothing here is published to crates.io, the API
-is not settled, and the specification's section 20 says what review would be
-most useful. Bugs found here are bugs in the document until shown otherwise —
-that is what it is for.
+The reference implementation of a final specification: every class, a decoder
+for each, the parallel encoder, an optional vector path, a C ABI and a Python
+module, all from this one codebase. The wire format will not change under it —
+v0.4.0 is fixed, and a format change is a new version.
+
+What is not settled is the **API**, and nothing is published: not to crates.io,
+not to PyPI. The specification's section 20 says what review would be most
+useful, and a bug found here is a bug in the document until shown otherwise —
+that is what an implementation of a specification is for.

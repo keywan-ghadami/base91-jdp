@@ -4,13 +4,12 @@
 
 Mail **keywan.ghadami@gmail.com**, or open a GitHub security advisory on
 [the repository](https://github.com/keywan-ghadami/base91z/security/advisories).
-A public issue is fine too: this is a draft-stage prototype with no users to
-protect, and a bug found in the open gets fixed faster than one found in
-private. There is no bounty and no embargo policy to negotiate.
+A public issue is fine too: nothing here has users to protect yet, and a bug
+found in the open gets fixed faster than one found in private. There is no bounty and no embargo policy to negotiate.
 
-Nothing here is deployed anywhere, nothing is published to crates.io, and the
-implementation is a prototype. What follows is what has been done to it, not a
-claim that it is finished.
+Nothing here is deployed anywhere and nothing is published to crates.io or
+PyPI. What follows is what has been done to it, not a claim that it is
+finished.
 
 ## What the threat model is
 
@@ -34,6 +33,20 @@ attacker-controlled:
   anything in the frame. Section 16 is the rule that what is *allocated* is
   bounded by what a payload of that size could physically produce, and not by
   what it says it produces.
+
+**The C ABI widens the blast radius, and is written to narrow it back.**
+`rust/src/ffi.rs` is the only place a caller's raw pointer is touched: it
+refuses a null out-parameter and a null input that claims a length, hands back
+`malloc`'d buffers so a C caller frees them the way it frees everything else,
+leaves every out-parameter untouched on failure, and exports
+`base91z_decode_bounded` so the ceiling of Section 16 is reachable without
+reading Rust. Everything below those functions is safe Rust, which is the point
+of offering the ABI at all: a C caller gets bounds-checked parsing of
+attacker-controlled input rather than a second implementation written in C.
+Panics cannot unwind into foreign frames -- `extern "C"` aborts instead -- and
+nothing is retained across a call, so the functions are safe to use
+concurrently. The Python module has the same shape and the same ceiling
+(`decode(..., max_bytes=...)`).
 
 The **encoder** is a smaller surface but not a zero one: it writes into buffers
 it has sized itself, through bulk paths that carry no per-byte bounds check.
@@ -65,6 +78,8 @@ Everything here runs in CI on every push, except where it says otherwise.
 | | what it catches |
 |---|---|
 | `cargo test`, with and without the `zstd` feature | Round trip over every class, the guarantees the specification states as guarantees, and `rust/tests/adversarial.rs` -- streams no encoder would write, asserted down to the error code. |
+| `rust/tests/ffi.rs`, and a C program CI links | The C entry points called as C calls them: null arguments, the empty input, an error's code and offset, the budget. The test also reads `include/base91z.h` and checks every status number against the Rust enum, because that is the one disagreement a C caller cannot detect -- it compiles and links either way. `examples/c/demo.c` is built against both the shared object and the static archive. |
+| `python -m pytest` on an installed wheel | Round trip, the alphabet, the JSON-escaping property against a real JSON encoder, the ceiling, the error codes, and that the type stubs still describe the module. Against an installed wheel rather than a source tree, so the stubs and the PEP 561 marker are the ones that ship. |
 | `cargo test --features simd` on nightly | The vector paths answer the same questions as the scalar ones. The whole suite runs under both and must agree character for character. |
 | `cargo clippy -- -D warnings`, stable and nightly | Including `clippy::undocumented_unsafe_blocks`, denied at the crate root: every `unsafe` block carries a `// SAFETY:` comment saying what makes it sound, and a new one without it does not compile. |
 | [`cargo fuzz`](rust/fuzz/README.md), five targets | Round trip, the decoder on arbitrary bytes, on alphabet-folded bytes, on streams built field by field, and the parallel encoder against the serial one. Built with AddressSanitizer. CI runs a short smoke of each; long runs are manual. |

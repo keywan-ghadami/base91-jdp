@@ -15,10 +15,10 @@
 > error, an ambiguity or a passage that cannot be implemented as written is a
 > correction to make, and Section 20 asks for exactly those.
 >
-> There is a prototype encoder and decoder for all of it, the compressed class
-> included, in `rust/`. Section 17 is measured against that prototype except
+> There is a complete encoder and decoder for all of it, the compressed class
+> included, in `rust/`. Section 17 is measured against that implementation except
 > where it says otherwise, and Section 17.3 and the run break of Section 11.1
-> are both things the prototype found and the arithmetic had missed. Sixteen of
+> are both things the implementation found and the arithmetic had missed. Sixteen of
 > the forty-four segment classes are unassigned, and a further forty-five are
 > reachable through the escape, so a later version has room without this one
 > spending any of it.
@@ -37,7 +37,7 @@
 > instead of guessing, and refuse a segment that expands past the caller's
 > ceiling before decompressing it rather than after. Section 17.23 measures
 > both sides. This changes the wire format of a draft that has not been
-> released: an earlier build of the prototype reads no stream that contains a
+> released: an earlier build of the implementation reads no stream that contains a
 > compressed segment, and none is expected to exist.
 
 ## 1. Abstract
@@ -1259,7 +1259,7 @@ The corpus is fetched by `bench/fetch.sh` and described in `bench/README.md`;
 every figure below is produced by an example in `rust/`, which encodes the
 corpus and decodes it again.
 
-> **What is and is not measured.** Everything below is the prototype in `rust/`
+> **What is and is not measured.** Everything below is the implementation in `rust/`
 > encoding the corpus and decoding it again, except: Section 17.2, which is the
 > 0.3.0 JavaScript codec; the ratios in Section 9, which are arithmetic; and
 > the packed classes, which neither corpus exercises. Neither
@@ -1324,7 +1324,7 @@ that are full of zeros.
 
 0.3.0's `MIN_BINARY_RUN` was measured against a structure this version does not
 have, and the run break of Section 11.1 is new. Both were swept with the
-prototype encoder over the core corpus, one at a time and then together, by
+encoder in `rust/` over the core corpus, one at a time and then together, by
 `rust/examples/sweep.rs`.
 
 | `MIN_BINARY_RUN` | **0** | 1 | 2 | 3 | 4 | 6 | 8 | 16 |
@@ -1368,10 +1368,11 @@ nothing else. `jdp 0.4.0` is the projection of Sections 8, 9 and 10.2.
 | core, 6.52 MB | 1.00698 | 1.09650 | 1.00464 | **0.98354** |
 | Silesia, 202 MiB | 1.05114 | 1.09861 | 1.03434 | **1.03792** |
 
-The last column is the prototype in `rust/`, encoding the corpus and decoding
+The last column is the implementation in `rust/`, encoding the corpus and decoding
 it again. The one before it is what this document projected before that
-prototype existed, and the two agree closely enough to say the arithmetic was
-right -- but only after the prototype found what the arithmetic had missed. Its
+implementation existed, and the two agree closely enough to say the arithmetic
+was right -- but only after the implementation found what the arithmetic had
+missed. Its
 first run over the corpus produced 1.03809 on the core group, not 1.00464,
 because the passthrough scan was swallowing the zero runs that the run classes
 exist to carry; the run break of Section 11.1 is that finding, and it is worth
@@ -1480,7 +1481,7 @@ Every contender runs the same zstd frame; what differs is the container.
 | Silesia, level 9 | 0.37270 | 0.34937 | **0.34403** | 1.53 % |
 
 Those were computed from the frame lengths before an implementation of
-Section 10 existed. There is one now, and it agrees: the prototype encodes the
+Section 10 existed. There is one now, and it agrees: the implementation encodes the
 core corpus at level 3 to **0.34445** against the 0.34436 projected here, a
 difference of two parts in ten thousand, which is the length fields of the
 frames the projection counted slightly differently.
@@ -1508,9 +1509,9 @@ Section 10.1 gives compressed segments a bound of their own.
 
 ### 17.10 Throughput, and what parallel encoding is worth
 
-The prototype in `rust/`, release build, on a shared four-core virtual machine.
+The implementation in `rust/`, release build, on a shared four-core virtual machine.
 Run-to-run spread on this host is wide; read a factor as real and ten percent as
-noise. These are the encoder without compression, since the prototype carries
+noise. These are the encoder without compression, since the implementation carries
 no zstd.
 
 | sample | serial | four threads | chunks spliced or rejoined |
@@ -1577,7 +1578,7 @@ where the dead-span probe settles thirty-two.
 ### 17.12 Not scanning, and what it is worth
 
 Section 11.5 lets an encoder decide that a stretch needs no scan. Measured in
-the prototype on four MB of high-entropy bytes:
+the implementation on four MB of high-entropy bytes:
 
 | | stable | with `simd` |
 |---|---|---|
@@ -1612,7 +1613,7 @@ have saved.
 ### 17.13 What the block coder costs
 
 Thirteen bytes to sixteen characters is the floor under every other number
-here, so it is worth saying what it is made of. Measured in the prototype, in
+here, so it is worth saying what it is made of. Measured in the implementation, in
 order of what each change was worth:
 
 | | MB/s |
@@ -1635,7 +1636,7 @@ shift, instead of eight shifts of a `u128`, measures at 1 180 MB/s against
 lookup, and moving eight lanes out costs more than the shifts saved.
 Assembling the sixteen characters into one register to store once rather than
 eight times costs a further 9 %. Both are implemented and verified in the
-prototype and neither is used; `rust/src/simd.rs` says what a vector path would
+implementation and neither is used; `rust/src/simd.rs` says what a vector path would
 need instead, which is a fully vectorised digit conversion where nothing leaves
 the registers until the store.
 
@@ -2354,7 +2355,7 @@ prefix, it took most of what the chained classes had been credited with.
 
 Eight classes, a chain grammar, a canonicity rule and an error code, for that.
 The lesson is not about gaps: it is that a projection is a reason to build a
-prototype, not a reason to build a feature.
+implementation, not a reason to build a feature.
 
 ### 18.8 More than one R-Set
 
@@ -2479,7 +2480,7 @@ three gigabytes a second. Base-2ᵏ renormalisation is a shift; base-91
 renormalisation is a division, and no lane count makes that a shift.
 
 So: correct, elegant, and worth 0.18 % on input this format sends to a
-compressor anyway, at a fourteenth of the throughput. The prototype stays in
+compressor anyway, at a fourteenth of the throughput. The implementation stays in
 the tree with its numbers because the idea is a good one that deserves a
 measurement rather than an opinion, and because the state-asymmetry finding is
 worth knowing.

@@ -1,0 +1,61 @@
+# Packaging for the Python bindings.
+#
+# The wheel is a compiled extension module: maturin builds `src/lib.rs`, which
+# is a PyO3 layer over the `base91z` crate in ../rust. There is no Python
+# implementation of this format and there is not going to be one -- what Python
+# runs here is the same encoder and decoder the Rust and C callers get.
+[build-system]
+requires = ["maturin>=1.8.2,<2"]
+build-backend = "maturin"
+
+[project]
+name = "base91z"
+# Major and minor track the specification version, as the crate does -- the
+# wire format is what a caller depends on -- and the patch level is this
+# distribution's own.
+version = "0.4.0"
+description = "Base91z: a binary-to-text encoding for bytes inside text protocols, smallest in JSON - Python bindings for the Rust implementation"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MPL-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Keywan Ghadami" }]
+keywords = ["base91", "base64", "encoding", "binary-to-text", "json", "compression"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Text Processing",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://keywan-ghadami.github.io/base91z/"
+Repository = "https://github.com/keywan-ghadami/base91z"
+Specification = "https://github.com/keywan-ghadami/base91z/blob/main/spec/base91z-v0.4.0.md"
+Benchmarks = "https://bench.ghadami.de"
+Issues = "https://github.com/keywan-ghadami/base91z/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.maturin]
+module-name = "base91z.base91z"
+# The wheel is a package -- `base91z/{__init__.py,__init__.pyi,py.typed}` from
+# `pysrc/`, plus the extension built into it -- rather than a bare `.so`,
+# because PEP 561 defines the marker file for a package and type checkers look
+# for it there.
+python-source = "pysrc"
+features = ["pyo3/extension-module"]
+strip = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

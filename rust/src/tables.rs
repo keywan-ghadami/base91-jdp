@@ -66,7 +66,7 @@ pub const MIN_RUN_IN_SEGMENT: usize = 8;
 pub const MIN_NONZERO_RUN_IN_SEGMENT: usize = 8;
 
 /// The three thresholds above, as the sweep of `examples/sweep.rs` sets them.
-/// A prototype exists to find out what they should be; the constants are what
+/// An implementation exists to find out what they should be; the constants are what
 /// it found.
 pub mod tuning {
     use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering::Relaxed};

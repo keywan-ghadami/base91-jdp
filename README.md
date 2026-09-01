@@ -6,7 +6,7 @@ one there is.**
 
 [![Website](https://img.shields.io/badge/website-base91z-1f6feb)](https://keywan-ghadami.github.io/base91z/)
 [![Spec](https://img.shields.io/badge/spec-v0.4.0%20final-green)](spec/base91z-v0.4.0.md)
-[![Implementation](https://img.shields.io/badge/implementation-Rust%20prototype-blue)](rust/README.md)
+[![Implementation](https://img.shields.io/badge/implementation-Rust%20%2B%20C%20ABI%20%2B%20Python-blue)](rust/README.md)
 [![License](https://img.shields.io/badge/license-MPL--2.0-green)](LICENSE)
 
 Text protocols carry text. An API request, a log line, a config file, a
@@ -123,7 +123,9 @@ two ends. `decode` reads every choice the encoder could have made.
 
 The knob that makes this work is also the one thing a pipeline does better.
 **The same payload can encode to different strings**, because the compression
-level is a parameter and each level produces a different zstd frame:
+level is a parameter of the encoding and a different level can produce a
+different frame. Levels often agree — on a very repetitive payload most of them
+find the same thing — but they need not, and that is enough:
 
 ```
 40 000 bytes of the CommonMark spec, through base91z::encode_at
@@ -160,6 +162,53 @@ If a protocol signs the encoded form rather than the payload, that property is
 worth more than the size, and this format does not offer it. `encode_plain`
 takes the compressor out and is stable within a version, but "within a version"
 is not the same promise.
+
+## Using it
+
+**Rust.** The crate is `rust/`; `encode` and `decode` are the whole interface.
+
+**C, and anything with a C FFI.** The crate builds a shared object and a static
+archive alongside the rlib, and [`rust/include/base91z.h`](rust/include/base91z.h)
+declares them. There is no second implementation in C to drift from this one.
+
+```c
+#include "base91z.h"
+
+char *text; size_t len;
+if (base91z_encode(data, data_len, &text, &len) == BASE91Z_OK) {
+    /* text is NUL-terminated and holds nothing JSON escapes */
+    base91z_free(text);
+}
+```
+
+```sh
+cargo build --release --manifest-path rust/Cargo.toml
+cc app.c -I rust/include -L rust/target/release -lbase91z
+make -C rust/examples/c run        # a worked example, which CI runs
+```
+
+Use `base91z_decode_bounded` on anything you did not encode yourself: a length
+field is a few characters and can declare far more output than the stream is
+long, and the budget is checked before the memory is reserved.
+
+**Python.** [`python/`](python/README.md) is a [PyO3](https://pyo3.rs) module
+over the same crate — there is no Python implementation of the format, and
+there is not going to be one.
+
+```python
+import base91z, json
+
+text = base91z.encode(payload)              # compresses where compression pays
+json.dumps({"blob": text})                  # nothing to escape
+payload = base91z.decode(text, max_bytes=1 << 20)
+```
+
+```sh
+cd python && maturin build --release && pip install dist/*.whl
+```
+
+One abi3 wheel loads on every CPython from 3.9 up, and the type stubs and the
+PEP 561 marker ship in it.
 
 ## Which one you want
 
@@ -234,7 +283,8 @@ This is why a figure can sit below 8 / log₂ 91 = 1.2293 — the bound for a
 | | |
 |---|---|
 | [`spec/`](spec/README.md) | The current specification, v0.4.0. Superseded versions in [`spec/history/`](spec/history/README.md). |
-| [`rust/`](rust/README.md) | The implementation: encoder, decoder, every class, parallel encoding, an optional vector path. |
+| [`rust/`](rust/README.md) | The implementation: encoder, decoder, every class, parallel encoding, an optional vector path, and the C ABI in [`include/base91z.h`](rust/include/base91z.h). |
+| [`python/`](python/README.md) | The Python module. PyO3 over the crate above, so it is the same encoder, not a second one. |
 | [`bench/`](bench/README.md) | How the three corpora are fetched. The numbers are in Section 17 of the specification. |
 | [`site/`](site/README.md) | The website generator. It has no content of its own. |
 | [`SECURITY.md`](SECURITY.md) | The threat model, what is run against the decoder, and how to report something. |
@@ -247,17 +297,20 @@ cargo run --release --manifest-path rust/Cargo.toml --example corpus -- bench/co
 
 ## Status, plainly
 
-**The specification is final; the implementation is a prototype, deployed
+**The specification is final; the implementation is complete and published
 nowhere.** The wire format is fixed — a stream encoded against v0.4.0 stays
-readable, and a change that would break one is a new version — and it is
-implemented, every class round-trips, and the parallel encoder is byte-identical
-to the serial one. What it has not had is a second reader: Section 20 of the
+readable, and a change that would break one is a new version. Every class is
+implemented and round-trips, the parallel encoder is byte-identical to the
+serial one, and the same code is reachable from Rust, from C through
+`include/base91z.h`, and from Python through the module in `python/`. What is
+not settled is the *API*: nothing is on crates.io or PyPI, and the shape of the
+entry points may still move. What it has not had is a second reader: Section 20 of the
 specification says which parts would most repay one, and Section 17 says which
 numbers are measured and which are still arguments. Neither the document being
 final nor the numbers being measured makes that reading less worth having.
 
-The crate is packaged to publish and has not been published. What is run
-against it -- an adversarial decode suite, five fuzz targets, Miri over the
+The crate and the wheel are packaged to publish and have not been published.
+What is run against them -- an adversarial decode suite, five fuzz targets, Miri over the
 raw-pointer paths, advisory and licence checks, and a lint that will not let an
 `unsafe` block through without a `SAFETY` comment -- is in
 [SECURITY.md](SECURITY.md), together with what has not been done.

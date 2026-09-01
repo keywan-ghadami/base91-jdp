@@ -143,3 +143,50 @@ jobs:
       - name: Licences, sources and bans
         working-directory: rust
         run: cargo deny check
+
+  cabi:
+    name: The C ABI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # A header no compiler ever reads is a document, not an interface. This
+      # builds a real C program against it and links it both ways: the shared
+      # object, and the static archive with the Rust runtime inside it.
+      - name: Shared
+        run: make -C rust/examples/c run
+      - name: Static
+        run: make -C rust/examples/c run-static
+      # And the half that needs no C compiler: the entry points called as C
+      # calls them, and the header's status numbers against the Rust enum.
+      - name: The ABI tests
+        run: cargo test --release --manifest-path rust/Cargo.toml --test ffi
+
+  python:
+    name: The Python module
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install maturin pytest
+      # An installed wheel, not an in-place build: the tests check the type
+      # stubs and the PEP 561 marker, which only exist once the wheel is put
+      # together, and a test against a source tree would pass without them.
+      - name: Build and install the wheel
+        working-directory: python
+        run: |
+          maturin build --release --out dist
+          pip install --force-reinstall dist/*.whl
+      - name: Test
+        working-directory: python
+        run: python -m pytest -q
+      # The oldest interpreter the abi3 tag claims must actually load it. 3.9
+      # in the matrix is what checks that claim rather than trusting the tag.
+      - name: The wheel is importable and says what it is
+        run: python -c "import base91z, sys; print(base91z.__version__, base91z.SPEC_VERSION, sys.version_info)"
